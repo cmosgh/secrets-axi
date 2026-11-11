@@ -11,7 +11,7 @@ const DEADLINE_MS = 400;
 export interface ScanResult {
   /** Relative paths of Secret Files below cwd, outside worktree copies. */
   files: string[];
-  /** Secret Files inside agent worktrees, one entry per path within a worktree, with the number of worktrees holding it. */
+  /** Secret Files at the root of agent worktrees, one entry per name, with the number of worktrees holding it. */
   worktrees: WorktreeCopies[];
   capped: boolean;
 }
@@ -53,8 +53,9 @@ export function scanSecretFiles(cwd: string, policy: Policy): ScanResult {
       if (entry.isDirectory()) {
         if (SKIP.has(entry.name)) continue;
         if (!worktree && isWorktreeRoot(basename(dir), entry.name)) {
+          // Root level only: fifteen full copies of a repository would exhaust the entry and time caps on the first one.
           const root = relative(cwd, path);
-          for (const wt of listDirs(path)) walk(join(path, wt), 0, { root, dir: join(path, wt) });
+          for (const wt of listDirs(path)) walk(join(path, wt), MAX_DEPTH, { root, dir: join(path, wt) });
         } else if (depth < MAX_DEPTH) walk(path, depth + 1, worktree);
       } else if (entry.isFile() && matchesAny(entry.name, patterns) && !matchesAny(entry.name, policy.secretFileExceptions)) {
         if (worktree) {

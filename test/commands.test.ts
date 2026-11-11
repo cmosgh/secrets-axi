@@ -26,9 +26,10 @@ function fixture(): { dir: string; home: string } {
   writeFileSync(join(dir, ".env"), `NODE_ENV=development\nPORT=3000\nDB_URL=postgres://app:${FAKE_PW}@localhost/app\nAPI_TOKEN=${FAKE_TOKEN}\nEMPTY=\n`);
   writeFileSync(join(dir, ".env.example"), "NODE_ENV=\nPORT=\n");
   writeFileSync(join(dir, ".env.test"), "PORT=3001\n");
-  for (const wt of ["a", "b"]) {
-    mkdirSync(join(dir, ".claude", "worktrees", wt), { recursive: true });
+  for (const wt of ["a", "b", "c"]) {
+    mkdirSync(join(dir, ".claude", "worktrees", wt, "apps"), { recursive: true });
     writeFileSync(join(dir, ".claude", "worktrees", wt, ".env"), "PORT=3000\n");
+    writeFileSync(join(dir, ".claude", "worktrees", wt, "apps", ".env"), "PORT=3000\n"); // below the root: not scanned
   }
   writeFileSync(join(dir, ".claude", "worktrees", "b", ".env.local"), "PORT=3000\n");
   mkdirSync(join(dir, "src"));
@@ -71,7 +72,7 @@ describe("secrets-axi commands", () => {
 
   it("home lists Secret Files with key counts, the source and the env files not loaded", async () => {
     const data = toon((await sx()).stdout);
-    expect(data["secret_files"]).toEqual([".env (6 keys)", ".env.test (1 keys)", ".env in 2 worktrees (.claude/worktrees)", ".env.local in 1 worktree (.claude/worktrees)"]);
+    expect(data["secret_files"]).toEqual([".env (6 keys)", ".env.test (1 keys)", ".env in 3 worktrees (.claude/worktrees)", ".env.local in 1 worktree (.claude/worktrees)"]);
     expect(data["source"]).toBe("dotenv (.env)");
     expect(data["not_loaded"]).toBe(".env.test");
     expect(data["guard"]).toBe("not installed");
