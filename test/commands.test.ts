@@ -72,9 +72,16 @@ describe("secrets-axi commands", () => {
 
   it("home lists Secret Files with key counts, the source and the env files not loaded", async () => {
     const data = toon((await sx()).stdout);
-    expect(data["secret_files"]).toEqual([".env (6 keys)", ".env.test (1 keys)", ".env in 3 worktrees (.claude/worktrees)", ".env.local in 1 worktree (.claude/worktrees)"]);
+    expect(data["secret_files"]).toEqual([
+      { path: ".env", keys: 6, tracked: false },
+      { path: ".env.test", keys: 1, tracked: false },
+    ]);
+    expect(data["worktree_copies"]).toEqual([
+      { path: ".env", worktrees: 3, root: ".claude/worktrees" },
+      { path: ".env.local", worktrees: 1, root: ".claude/worktrees" },
+    ]);
     expect(data["source"]).toBe("dotenv (.env)");
-    expect(data["not_loaded"]).toBe(".env.test");
+    expect(data["not_loaded"]).toEqual([".env.test"]);
     expect(data["guard"]).toBe("not installed");
   });
 

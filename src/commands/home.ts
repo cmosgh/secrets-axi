@@ -19,17 +19,20 @@ export async function homeCommand(args: string[], ctx: CommandContext): Promise<
   const envFiles = findEnvFiles(ctx.cwd, policy);
   const detected = detectSource(ctx.cwd, policy, envFiles);
   const tracked = trackedByGit(ctx.cwd, scan.files);
-  const files = scan.files.map((f) => {
-    const count = /\.env|\.envrc|\.secrets/.test(f) ? keyCount(join(ctx.cwd, f)) : undefined;
-    return `${f}${count !== undefined ? ` (${count} keys)` : ""}${tracked.has(f) ? " TRACKED BY GIT" : ""}`;
-  });
-  // Worktree copies are the same files again: one row per path, not one per worktree.
-  for (const w of scan.worktrees) files.push(`${w.path} in ${w.count} worktree${w.count === 1 ? "" : "s"} (${w.root})`);
+  // Tables, not prose: uniform rows encode as TOON tabular arrays.
+  const files = scan.files.map((f) => ({
+    path: f,
+    keys: /\.env|\.envrc|\.secrets/.test(f) ? (keyCount(join(ctx.cwd, f)) ?? null) : null,
+    tracked: tracked.has(f),
+  }));
+  // Worktree copies are the same files again: one row per name, not one per worktree.
+  const worktreeCopies = scan.worktrees.map((w) => ({ path: w.path, worktrees: w.count, root: w.root }));
   let guard: string;
+  let agents: string[] = [];
   try {
     const status = guardStatus({ scope: "user", cwd: ctx.cwd, homeDir: ctx.home });
-    const on = [status.claude.installed ? "Claude Code" : "", status.codex.installed ? "Codex" : ""].filter(Boolean);
-    guard = on.length > 0 ? `active (${on.join(", ")})` : "not installed";
+    agents = [status.claude.installed ? "Claude Code" : "", status.codex.installed ? "Codex" : ""].filter(Boolean);
+    guard = agents.length > 0 ? "active" : "not installed";
   } catch {
     guard = "unknown";
   }
@@ -40,15 +43,18 @@ export async function homeCommand(args: string[], ctx: CommandContext): Promise<
     ...(guard === "not installed" ? ["Run `secrets-axi setup hooks` to install the Guard for Claude Code and Codex"] : []),
     ...(tracked.size > 0 ? [`${[...tracked].join(", ")} is tracked by git: \`git diff\`/\`git log -p\` can print it and the Guard cannot cover that; untrack it`] : []),
     ...(load.broken.map((b) => `${b} is not valid JSON and was skipped`)),
+    ...(scan.capped ? ["The scan stopped early (large tree): Secret Files deeper in the tree may be missing"] : []),
   ];
   return out(
     block({
       guard,
+      ...(agents.length > 0 ? { agents } : {}),
       secret_files: files.length > 0 ? files : "none found",
-      ...(scan.capped ? { scan: "partial (large tree)" } : {}),
+      ...(worktreeCopies.length > 0 ? { worktree_copies: worktreeCopies } : {}),
+      ...(scan.capped ? { scan: "partial" } : {}),
       source,
-      ...(detected.otherEnvFiles.length > 0 ? { not_loaded: detected.otherEnvFiles.join(", ") } : {}),
-      ...(policy.aws.length > 0 ? { aws: policy.aws.join(", ") } : {}),
+      ...(detected.otherEnvFiles.length > 0 ? { not_loaded: detected.otherEnvFiles } : {}),
+      ...(policy.aws.length > 0 ? { aws: policy.aws } : {}),
     }),
     helpBlock(help),
   );
