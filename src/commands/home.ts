@@ -23,6 +23,8 @@ export async function homeCommand(args: string[], ctx: CommandContext): Promise<
     const count = /\.env|\.envrc|\.secrets/.test(f) ? keyCount(join(ctx.cwd, f)) : undefined;
     return `${f}${count !== undefined ? ` (${count} keys)` : ""}${tracked.has(f) ? " TRACKED BY GIT" : ""}`;
   });
+  // Worktree copies are the same files again: one row per path, not one per worktree.
+  for (const w of scan.worktrees) files.push(`${w.path} in ${w.count} worktree${w.count === 1 ? "" : "s"} (${w.root})`);
   let guard: string;
   try {
     const status = guardStatus({ scope: "user", cwd: ctx.cwd, homeDir: ctx.home });
