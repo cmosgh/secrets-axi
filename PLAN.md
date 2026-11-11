@@ -26,7 +26,7 @@ Rules:
 - Deterministic and listable: `secrets-axi policy` prints every list; `secrets-axi check '<command>'` prints the decision the Guard would make and why.
 - Always `deny`, never `ask`: `ask` differs between agents and "approve once" is how values end up in transcripts.
 - Hook entry is a bundled single file with `node:` builtins only; budget < 30 ms per call, pinned by a test.
-- Hard layer: `setup hooks` also writes `Read(<pattern>)` deny rules for the built-in Secret File list into the agent's settings and removes exactly those on `uninstall`. Sandbox `denyRead` is recommended in `setup status`, never written.
+- Hard layer: `setup hooks` also writes `Read(<pattern>)` deny rules for the built-in Secret File list into the agent's settings and removes exactly those on `uninstall`. Deny rules have no exceptions, so `.env.*` is enumerated there (`.env.local`, `.env.production`, ...) to keep `.env.example` readable; the hook covers the wildcard. Sandbox `denyRead` is recommended in `setup status`, never written.
 - Hooks are installed per agent by secrets-axi itself (own entries only), `axi-sdk-js` has no `PreToolUse` support yet; upstream once the shape is proven. SessionStart home view goes through the SDK like ts-axi.
 
 ### Runner (CLI)
@@ -46,7 +46,7 @@ Secret Source detection order, first match wins, `--source` overrides:
 2. `doppler.yaml` / `.infisical.json` → that tool's export (stub)
 3. `.env.keys` present → `dotenvx get --all` (stub)
 4. plain `.env` → own parser (v1)
-5. AWS entries from Policy or `--aws-secret` → AWS SDK, merged over the env file (v1); JSON object → top-level keys as variables; bare string needs `ID=NAME`
+5. AWS entries from Policy or `--aws-secret` → the `aws` CLI (`secretsmanager get-secret-value`, `ssm:/path` → `ssm get-parameter --with-decryption`; no SDK dependency, the user's profiles and SSO apply), merged over the env file (v1); JSON object → top-level keys as variables; bare string needs `ID=NAME`
 
 Sources resolve; the Runner spawns the child with the merged env and masks stdout/stderr. Env files: `.env` only by default; `--env-file` repeatable in order; Policy `envFiles`. Never the `NODE_ENV` cascade.
 

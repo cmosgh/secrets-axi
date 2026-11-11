@@ -88,7 +88,7 @@ export const BUILTIN: Policy = {
     "kubectl get secret",
     "docker config inspect",
   ],
-  consumers: ["secrets-axi", "docker --env-file", "docker compose --env-file", "podman --env-file", "dotenv -e", "dotenv --file", "dotenvx", "op run --env-file", "direnv allow", "chmod", "ls", "stat", "file", "wc", "rm", "git add", "git rm", "git checkout --", "git restore", "test", "[", "cp", "mv", "touch"],
+  consumers: ["secrets-axi", "docker --env-file", "docker compose --env-file", "podman --env-file", "dotenv -e", "dotenv --file", "dotenvx", "op run --env-file", "direnv allow", "chmod", "ls", "stat", "file", "wc", "rm", "git add", "git rm", "git checkout --", "git restore", "test", "[", "touch", "echo", "printf", "shred", "basename", "dirname", "realpath", "readlink"],
   reveal: ["NODE_ENV", "ENV", "ENVIRONMENT", "APP_ENV", "PORT", "HOST", "HOSTNAME", "LOG_LEVEL", "DEBUG", "TZ", "LANG", "LC_ALL", "CI", "PUBLIC_URL", "BASE_URL", "APP_NAME", "APP_URL", "API_URL", "API_BASE_URL", "VITE_*", "NEXT_PUBLIC_*", "REACT_APP_*", "PUBLIC_*", "EXPO_PUBLIC_*", "NUXT_PUBLIC_*"],
   envFiles: [".env"],
   aws: [],
@@ -199,16 +199,13 @@ export function secretFilePattern(path: string, policy: Policy, cwd: string, hom
   const abs = resolve(cwd, expandHome(path, home));
   const name = basename(abs);
   if (matchesAny(name, policy.secretFileExceptions)) return undefined;
-  for (const pattern of policy.secretFiles) {
-    if (pattern.startsWith("~/") || isAbsolute(pattern)) {
-      if (globToRegExp(expandHome(pattern, home)).test(abs)) return pattern;
-    } else if (pattern.includes("/")) {
-      if (globToRegExp(resolve(cwd, pattern)).test(abs)) return pattern;
-    } else if (globToRegExp(pattern).test(name)) {
-      return pattern;
-    }
+  // Path patterns first: they are the more specific match (`~/.ssh/id_*` over `id_rsa*`).
+  const byPath = policy.secretFiles.filter((p) => p.includes("/"));
+  for (const pattern of byPath) {
+    const full = pattern.startsWith("~/") || isAbsolute(pattern) ? expandHome(pattern, home) : resolve(cwd, pattern);
+    if (globToRegExp(full).test(abs)) return pattern;
   }
-  return undefined;
+  return policy.secretFiles.find((p) => !p.includes("/") && globToRegExp(p).test(name));
 }
 
 export function isRevealKey(key: string, policy: Policy): boolean {

@@ -162,9 +162,26 @@ function matching(text: string, open: number): number {
   return text.length;
 }
 
-const WRAPPERS = new Set(["sudo", "env", "command", "exec", "time", "nohup", "nice", "builtin", "doas", "timeout", "xargs", "caffeinate", "stdbuf", "unbuffer"]);
+/** Wrappers the Guard looks through, with the options of each that take a value. */
+const WRAPPERS: Record<string, string[]> = {
+  sudo: ["-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U", "-T"],
+  doas: ["-u", "-C"],
+  env: ["-u", "-C", "-S", "--unset", "--chdir", "--split-string"],
+  command: [],
+  exec: ["-a"],
+  time: ["-f", "-o"],
+  nohup: [],
+  nice: ["-n", "--adjustment"],
+  builtin: [],
+  timeout: ["-s", "-k", "--signal", "--kill-after"],
+  xargs: ["-I", "-n", "-P", "-d", "-L", "-s", "-E", "-a"],
+  caffeinate: ["-t", "-w"],
+  stdbuf: ["-i", "-o", "-e"],
+  unbuffer: [],
+  nix: ["--option"],
+};
 
-/** The program of a simple command: skips `VAR=x` assignments and common wrappers (and their option flags). */
+/** The program of a simple command: skips `VAR=x` assignments and common wrappers with their options. */
 export function programOf(cmd: SimpleCommand): { name: string; index: number } | undefined {
   let i = 0;
   const tokens = cmd.tokens;
@@ -175,12 +192,17 @@ export function programOf(cmd: SimpleCommand): { name: string; index: number } |
       continue;
     }
     const name = t.text.replace(/^.*\//, "");
-    if (WRAPPERS.has(name)) {
+    const valued = WRAPPERS[name];
+    if (valued) {
       i++;
-      // `timeout 5`, `nice -n 5`, `sudo -u x`: skip the wrapper's own arguments.
-      while (i < tokens.length && (tokens[i]!.text.startsWith("-") || (name === "timeout" && /^\d/.test(tokens[i]!.text)))) i++;
-      if (name === "sudo" || name === "doas" || name === "nice") {
-        while (i < tokens.length && !tokens[i]!.text.startsWith("-") && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i]!.text)) i++;
+      while (i < tokens.length) {
+        const w = tokens[i]!.text;
+        if (name === "timeout" && /^\d+[smhd]?$/.test(w)) {
+          i++;
+          continue;
+        }
+        if (!w.startsWith("-")) break;
+        i += valued.includes(w) && !w.includes("=") ? 2 : 1;
       }
       continue;
     }

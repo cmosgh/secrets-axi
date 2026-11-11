@@ -8,7 +8,7 @@ const END = "<!-- axi-tools:end -->";
 const TARGETS = [
   {
     "readme": "README.md",
-    "npm": ".github/other-tools/ts-axi.npm.md"
+    "npm": ".github/other-tools/secrets-axi.npm.md"
   }
 ];
 

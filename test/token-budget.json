@@ -1,0 +1,12 @@
+{
+  "home": 222,
+  "keys": 109,
+  "check deny bash": 83,
+  "check deny read": 69,
+  "check rewrite": 76,
+  "check fetch": 104,
+  "set": 26,
+  "policy reveal": 121,
+  "error unknown flag": 40,
+  "error missing file": 30
+}

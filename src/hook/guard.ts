@@ -1,5 +1,5 @@
 // Guard decisions: deterministic, from the Policy and the literal call. Node builtins only.
-import { basename, relative, resolve } from "node:path";
+import { basename, isAbsolute, relative, resolve } from "node:path";
 import { basenamePatterns, expandHome, secretFilePattern, type Policy } from "../policy.js";
 import { parseCommand, programOf, type SimpleCommand, type Token } from "./tokenize.js";
 
@@ -20,13 +20,14 @@ export interface GuardOptions {
   home?: string;
 }
 
-const RECURSIVE_SEARCH: Record<string, { always: boolean; flags: string[]; exclude: (pattern: string) => string[] }> = {
-  grep: { always: false, flags: ["-r", "-R", "--recursive", "--dereference-recursive", "--include", "--exclude-dir"], exclude: (p) => [`--exclude=${p}`] },
-  egrep: { always: false, flags: ["-r", "-R", "--recursive"], exclude: (p) => [`--exclude=${p}`] },
-  fgrep: { always: false, flags: ["-r", "-R", "--recursive"], exclude: (p) => [`--exclude=${p}`] },
-  rg: { always: true, flags: [], exclude: (p) => ["-g", `!${p}`] },
-  ag: { always: true, flags: [], exclude: (p) => ["--ignore", p] },
-  ack: { always: true, flags: [], exclude: (p) => [`--ignore-file=match:${globToAckRegex(p)}`] },
+/** Per search tool: when it is recursive and how to exclude a set of basename patterns (already shell-quoted). */
+const RECURSIVE_SEARCH: Record<string, { always: boolean; flags: string[]; exclude: (patterns: string[]) => string }> = {
+  grep: { always: false, flags: ["-r", "-R", "--recursive", "--dereference-recursive", "--include", "--exclude-dir"], exclude: (ps) => ps.map((p) => `--exclude=${quote(p)}`).join(" ") },
+  egrep: { always: false, flags: ["-r", "-R", "--recursive"], exclude: (ps) => ps.map((p) => `--exclude=${quote(p)}`).join(" ") },
+  fgrep: { always: false, flags: ["-r", "-R", "--recursive"], exclude: (ps) => ps.map((p) => `--exclude=${quote(p)}`).join(" ") },
+  rg: { always: true, flags: [], exclude: (ps) => `-g ${quote(`!{${ps.join(",")}}`)}` },
+  ag: { always: true, flags: [], exclude: (ps) => ps.map((p) => `--ignore ${quote(p)}`).join(" ") },
+  ack: { always: true, flags: [], exclude: (ps) => ps.map((p) => `--ignore-file=${quote(`match:${globToAckRegex(p)}`)}`).join(" ") },
 };
 
 function globToAckRegex(p: string): string {
@@ -37,8 +38,11 @@ function globToAckRegex(p: string): string {
 export function display(path: string, cwd: string, home: string | undefined): string {
   const abs = resolve(cwd, expandHome(path, home));
   const rel = relative(cwd, abs);
-  if (rel && !rel.startsWith("..") && !resolve(rel).startsWith("/")) return rel;
-  if (home && abs.startsWith(`${home}/`)) return `~${abs.slice(home.length)}`;
+  const underCwd = rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+  const underHome = home !== undefined && abs.startsWith(`${home}/`);
+  // `~/...` wins for home files even when (as in tests) the home sits inside the repository.
+  if (underHome && (!underCwd || home.startsWith(`${cwd}/`))) return `~${abs.slice(home.length)}`;
+  if (underCwd) return rel;
   return abs;
 }
 
@@ -101,7 +105,7 @@ function grepTool(call: ToolCall, policy: Policy, home: string | undefined): Dec
 }
 
 function quote(s: string): string {
-  return /^[A-Za-z0-9_./~@:+-]+$/.test(s) ? s : `'${s.replace(/'/g, "'\\''")}'`;
+  return /^[A-Za-z0-9_./~@:+=,-]+$/.test(s) ? s : `'${s.replace(/'/g, "'\\''")}'`;
 }
 
 interface Consumer {
@@ -113,6 +117,39 @@ function parseConsumer(spec: string): Consumer {
   const parts = spec.split(/\s+/);
   const flagAt = parts.findIndex((p) => p.startsWith("-"));
   return flagAt < 0 ? { program: parts } : { program: parts.slice(0, flagAt), flag: parts[flagAt] };
+}
+
+const INLINE_CODE: Record<string, string[]> = {
+  python: ["-c"],
+  python3: ["-c"],
+  python2: ["-c"],
+  node: ["-e", "--eval", "-p", "--print"],
+  bun: ["-e", "--eval", "-p", "--print"],
+  deno: ["eval"],
+  ruby: ["-e"],
+  perl: ["-e", "-E"],
+  php: ["-r"],
+  sh: ["-c"],
+  bash: ["-c"],
+  zsh: ["-c"],
+  dash: ["-c"],
+  fish: ["-c"],
+  osascript: ["-e"],
+};
+
+/** String literals of inline code (`python -c '... open(".env") ...'`): each is a path candidate. */
+function inlineLiterals(cmd: SimpleCommand, program: string): string[] {
+  const flags = INLINE_CODE[program];
+  if (!flags) return [];
+  const out: string[] = [];
+  const words = cmd.tokens.map((t) => t.text);
+  for (let i = 0; i < words.length; i++) {
+    if (!flags.includes(words[i]!)) continue;
+    const code = words[i + 1] ?? "";
+    for (const m of code.matchAll(/(["'`])([^"'`\n]{1,200})\1/g)) out.push(m[2]!);
+    if (program.endsWith("sh")) for (const inner of parseCommand(code)) out.push(...inner.tokens.map((t) => t.text));
+  }
+  return out;
 }
 
 /** Tokens of a command that resolve to Secret Files, with the `--flag=value` form unwrapped. */
@@ -136,6 +173,15 @@ function secretTokens(cmd: SimpleCommand, policy: Policy, cwd: string, home: str
       }
     }
   }
+  if (program && hits.length === 0) {
+    for (const literal of inlineLiterals(cmd, program)) {
+      const pattern = secretFilePattern(literal, policy, cwd, home);
+      if (pattern) {
+        hits.push({ token: cmd.tokens[0]!, path: literal, pattern });
+        break;
+      }
+    }
+  }
   return hits;
 }
 
@@ -148,7 +194,15 @@ function isFetch(cmd: SimpleCommand, programIndex: number, policy: Policy): stri
     const flags = parts.filter((p) => p.startsWith("-"));
     const first = positional[0]?.replace(/^.*\//, "");
     if (first !== need[0]) continue;
-    if (!need.slice(1).every((n, i) => positional[i + 1] === n)) continue;
+    // Global options with values (`aws --profile x ssm ...`) sit between: the subcommand words must appear in order, not adjacent.
+    let at = 1;
+    const inOrder = need.slice(1).every((n) => {
+      const found = positional.indexOf(n, at);
+      if (found < 0) return false;
+      at = found + 1;
+      return true;
+    });
+    if (!inOrder) continue;
     if (!flags.every((f) => words.some((w) => w === f || w.startsWith(`${f}=`)))) continue;
     return spec;
   }
@@ -207,8 +261,7 @@ function bash(call: ToolCall, policy: Policy, home: string | undefined): Decisio
       const recursive = search.always || words.some((w) => search.flags.some((f) => w === f || w.startsWith(`${f}=`))) || words.some((w) => /^-[a-zA-Z]*[rR]/.test(w) && !w.startsWith("--"));
       const alreadyExcluded = words.some((w) => w.includes(".env"));
       if (recursive && !alreadyExcluded) {
-        const insert = basenamePatterns(policy).flatMap((p) => search.exclude(p)).map(quote).join(" ");
-        rewrites.push({ at: cmd.tokens[prog.index]!.end, insert: ` ${insert}` });
+        rewrites.push({ at: cmd.tokens[prog.index]!.end, insert: ` ${search.exclude(basenamePatterns(policy))}` });
       }
     }
   }

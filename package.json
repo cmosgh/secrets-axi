@@ -29,7 +29,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.test.json",
-    "check": "pnpm run typecheck && pnpm run test && pnpm run build && pnpm run build:skill -- --check",
+    "check": "pnpm run typecheck && pnpm run build && pnpm run test && pnpm run build:skill -- --check",
     "dev": "tsx bin/secrets-axi.ts",
     "prepublishOnly": "pnpm run check"
   },
