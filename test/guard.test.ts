@@ -118,6 +118,10 @@ describe("Bash reads", () => {
     expect(bash("head certs/*.pem").kind).toBe("deny");
     expect(bash("grep -r X --include=.env* .").kind).toBe("deny");
     expect(bash("rg -g '.env*' TOKEN").kind).toBe("deny");
+    expect(bash("rg --glob=.env FAKE").kind).toBe("deny");
+    expect(bash("rg -g=.env FAKE").kind).toBe("deny");
+    expect(bash("rg -g .env FAKE").kind).toBe("deny");
+    expect(bash("secrets-axi run -- secrets-axi run -- cat .env").kind).toBe("deny");
     expect(bash("jq .key data.json").kind).toBe("pass");
     expect(bash("cat src/*.ts").kind).toBe("pass");
   });
@@ -160,7 +164,10 @@ describe("Bash recursive search", () => {
     expect(bash("rg TODO | head -3").kind).toBe("rewrite");
     expect(bash("grep TODO src/a.ts").kind).toBe("pass");
     expect(bash("rg TODO -g '!.env*'").kind).toBe("pass");
-    expect(bash("grep -r TODO --exclude=.env .").kind).toBe("pass");
+    expect(bash("grep -r TODO --exclude=foo .").kind).toBe("rewrite");
+    expect(bash("grep -r TODO --exclude=.env .").kind).toBe("rewrite");
+    expect(bash("rg TODO -g '!{.env,.env.*,*.pem}'").kind).toBe("rewrite");
+    expect(bash("rg TODO -g '!*'").kind).toBe("pass");
   });
 });
 

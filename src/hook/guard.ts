@@ -155,12 +155,9 @@ function inlineLiterals(cmd: SimpleCommand, program: string): string[] {
 /** Tokens of a command that resolve to Secret Files, with the `--flag=value` form unwrapped. */
 function secretTokens(cmd: SimpleCommand, policy: Policy, cwd: string, home: string | undefined, program: string | undefined): Array<{ token: Token; path: string; pattern: string }> {
   const hits: Array<{ token: Token; path: string; pattern: string }> = [];
-  const EXCLUSION = /^(--exclude|--exclude-dir|--ignore|--ignore-file|--glob|--iglob|-g)(=|$)/;
   for (const [i, token] of cmd.tokens.entries()) {
-    // The value of an exclusion flag names what is NOT read.
-    if (EXCLUSION.test(token.text) && token.text.includes("=")) continue;
-    const prev = cmd.tokens[i - 1]?.text ?? "";
-    if (EXCLUSION.test(prev) && !prev.includes("=") && (token.text.startsWith("!") || /^--(exclude|ignore)/.test(prev))) continue;
+    // The value of an exclusion names what is NOT read: `--exclude=X`, `--ignore X`, `-g '!X'` (a plain `-g X` includes).
+    if (exclusionValue(token.text, cmd.tokens[i - 1]?.text) !== undefined) continue;
     const candidates = [token.text];
     const eq = token.text.match(/^--?[A-Za-z][\w-]*=(.+)$/);
     if (eq) candidates.push(eq[1]!);
@@ -188,6 +185,27 @@ function secretTokens(cmd: SimpleCommand, policy: Policy, cwd: string, home: str
     }
   }
   return hits;
+}
+
+const ALWAYS_EXCLUDES = /^(--exclude|--exclude-dir|--ignore|--ignore-file)(=|$)/;
+const GLOB_FLAGS = /^(--glob|--iglob|-g)(=|$)/;
+
+/** The pattern an exclusion token (or flag value) excludes, or undefined when the token is not an exclusion. */
+function exclusionValue(word: string, prev: string | undefined): string | undefined {
+  const eq = word.indexOf("=");
+  if (ALWAYS_EXCLUDES.test(word) && eq > 0) return word.slice(eq + 1);
+  if (GLOB_FLAGS.test(word) && eq > 0 && word[eq + 1] === "!") return word.slice(eq + 2);
+  if (prev !== undefined && !prev.includes("=")) {
+    if (ALWAYS_EXCLUDES.test(prev)) return word;
+    if (GLOB_FLAGS.test(prev) && word.startsWith("!")) return word.slice(1);
+  }
+  return undefined;
+}
+
+/** Does an exclusion pattern cover every Secret File basename pattern? Only then is a search "already excluded". */
+function excludesSecrets(value: string, policy: Policy): boolean {
+  const re = globToRegExp(value.replace(/^.*\//, ""));
+  return sampleNames(policy).every((name) => re.test(name));
 }
 
 /** A glob token (`.env*`, `*.pem`) that could name a Secret File: tested against one sample name per pattern. */
@@ -263,14 +281,16 @@ function bash(call: ToolCall, policy: Policy, home: string | undefined): Decisio
     let cmd = outer;
     let prog = programOf(cmd);
     if (!prog) continue;
-    if (prog.name === "secrets-axi") {
-      // `keys`/`set`/`check` name the file on purpose; `run -- <child>` is judged by the child.
+    // `keys`/`set`/`check` name the file on purpose; `run -- <child>` is judged by the child, however deep.
+    let hops = 0;
+    while (prog.name === "secrets-axi" && hops++ < 4) {
       const child = runChild(cmd, prog.index);
       const childProg = child ? programOf(child) : undefined;
-      if (!child || !childProg) continue;
+      if (!child || !childProg) break;
       cmd = child;
       prog = childProg;
     }
+    if (prog.name === "secrets-axi") continue;
     const hits = secretTokens(cmd, policy, cwd, home, prog.name);
     if (hits.length > 0) {
       if (consumes(cmd, prog.index, prog.name, hits, policy)) continue;
@@ -291,7 +311,10 @@ function bash(call: ToolCall, policy: Policy, home: string | undefined): Decisio
     if (search) {
       const words = cmd.tokens.slice(prog.index + 1).map((t) => t.text);
       const recursive = search.always || words.some((w) => search.flags.some((f) => w === f || w.startsWith(`${f}=`))) || words.some((w) => /^-[a-zA-Z]*[rR]/.test(w) && !w.startsWith("--"));
-      const alreadyExcluded = words.some((w, i) => /^(--exclude|--ignore|--ignore-file|-g|--glob|--iglob)(=|$)/.test(w) && /[!]/.test(w.includes("=") ? w : (words[i + 1] ?? "")) || /^--exclude=/.test(w));
+      const alreadyExcluded = words.some((w, i) => {
+        const value = exclusionValue(w, words[i - 1]);
+        return value !== undefined && excludesSecrets(value, policy);
+      });
       if (recursive && !alreadyExcluded) {
         rewrites.push({ at: cmd.tokens[prog.index]!.end, insert: ` ${search.exclude(basenamePatterns(policy))}` });
       }
