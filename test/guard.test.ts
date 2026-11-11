@@ -163,7 +163,7 @@ describe("Bash recursive search", () => {
     expect(r.input.command).toMatch(/^rg -g '!\{\.env,\.env\.\*,.*\}' -i password$/);
     expect(bash("rg TODO | head -3").kind).toBe("rewrite");
     expect(bash("grep TODO src/a.ts").kind).toBe("pass");
-    expect(bash("rg TODO -g '!.env*'").kind).toBe("pass");
+    expect(bash("rg TODO -g '!.env*'").kind).toBe("rewrite");
     expect(bash("grep -r TODO --exclude=foo .").kind).toBe("rewrite");
     expect(bash("grep -r TODO --exclude=.env .").kind).toBe("rewrite");
     expect(bash("rg TODO -g '!{.env,.env.*,*.pem}'").kind).toBe("rewrite");
