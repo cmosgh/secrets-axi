@@ -1,0 +1,252 @@
+// Guard decisions: deterministic, from the Policy and the literal call. Node builtins only.
+import { basename, relative, resolve } from "node:path";
+import { basenamePatterns, expandHome, secretFilePattern, type Policy } from "../policy.js";
+import { parseCommand, programOf, type SimpleCommand, type Token } from "./tokenize.js";
+
+export type ToolName = "Read" | "Edit" | "Write" | "MultiEdit" | "NotebookEdit" | "Grep" | "Glob" | "Bash" | string;
+
+export interface ToolCall {
+  tool: ToolName;
+  input: Record<string, unknown>;
+  cwd: string;
+}
+
+export type Decision =
+  | { kind: "pass" }
+  | { kind: "deny"; rule: string; file?: string; hint: string }
+  | { kind: "rewrite"; rule: string; input: Record<string, unknown>; note: string };
+
+export interface GuardOptions {
+  home?: string;
+}
+
+const RECURSIVE_SEARCH: Record<string, { always: boolean; flags: string[]; exclude: (pattern: string) => string[] }> = {
+  grep: { always: false, flags: ["-r", "-R", "--recursive", "--dereference-recursive", "--include", "--exclude-dir"], exclude: (p) => [`--exclude=${p}`] },
+  egrep: { always: false, flags: ["-r", "-R", "--recursive"], exclude: (p) => [`--exclude=${p}`] },
+  fgrep: { always: false, flags: ["-r", "-R", "--recursive"], exclude: (p) => [`--exclude=${p}`] },
+  rg: { always: true, flags: [], exclude: (p) => ["-g", `!${p}`] },
+  ag: { always: true, flags: [], exclude: (p) => ["--ignore", p] },
+  ack: { always: true, flags: [], exclude: (p) => [`--ignore-file=match:${globToAckRegex(p)}`] },
+};
+
+function globToAckRegex(p: string): string {
+  return `/^${p.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$/`;
+}
+
+/** Display form of a path for Hints: relative to cwd when below it, `~/...` for home, else absolute. */
+export function display(path: string, cwd: string, home: string | undefined): string {
+  const abs = resolve(cwd, expandHome(path, home));
+  const rel = relative(cwd, abs);
+  if (rel && !rel.startsWith("..") && !resolve(rel).startsWith("/")) return rel;
+  if (home && abs.startsWith(`${home}/`)) return `~${abs.slice(home.length)}`;
+  return abs;
+}
+
+export function decide(call: ToolCall, policy: Policy, options: GuardOptions = {}): Decision {
+  const home = options.home;
+  switch (call.tool) {
+    case "Read":
+    case "Edit":
+    case "Write":
+    case "MultiEdit":
+    case "NotebookEdit":
+      return fileTool(call, policy, home);
+    case "Grep":
+      return grepTool(call, policy, home);
+    case "Bash":
+      return bash(call, policy, home);
+    default:
+      return { kind: "pass" };
+  }
+}
+
+function fileTool(call: ToolCall, policy: Policy, home: string | undefined): Decision {
+  const path = typeof call.input["file_path"] === "string" ? call.input["file_path"] : typeof call.input["notebook_path"] === "string" ? call.input["notebook_path"] : undefined;
+  if (!path) return { kind: "pass" };
+  const pattern = secretFilePattern(path, policy, call.cwd, home);
+  if (!pattern) return { kind: "pass" };
+  const file = display(path, call.cwd, home);
+  if (call.tool === "Read") {
+    return { kind: "deny", rule: `secretFiles:${pattern}`, file, hint: readHint(file) };
+  }
+  return { kind: "deny", rule: `secretFiles:${pattern}`, file, hint: editHint(file) };
+}
+
+function readHint(file: string): string {
+  return `${file} is a Secret File - its values must not enter the transcript. Run \`secrets-axi keys ${quote(file)}\` for its variable names and shapes, or \`secrets-axi run -- <command>\` to run something with it loaded`;
+}
+
+function editHint(file: string): string {
+  return `${file} is a Secret File - editing it would echo its values. Run \`secrets-axi set ${quote(file)} KEY=value\` to add or change one variable, \`secrets-axi unset ${quote(file)} KEY\` to remove one`;
+}
+
+function grepTool(call: ToolCall, policy: Policy, home: string | undefined): Decision {
+  const path = typeof call.input["path"] === "string" ? call.input["path"] : undefined;
+  if (path) {
+    const pattern = secretFilePattern(path, policy, call.cwd, home);
+    if (pattern) {
+      const file = display(path, call.cwd, home);
+      return { kind: "deny", rule: `secretFiles:${pattern}`, file, hint: readHint(file) };
+    }
+  }
+  const glob = typeof call.input["glob"] === "string" ? call.input["glob"].trim() : "";
+  // An explicit include glob already narrows the search; a `.env`-shaped one is the agent asking for the file (deny).
+  if (glob !== "") {
+    const asks = basenamePatterns(policy).some((p) => glob === p || glob.endsWith(`/${p}`));
+    if (asks) return { kind: "deny", rule: `secretFiles:${glob}`, file: glob, hint: readHint(glob) };
+    return { kind: "pass" };
+  }
+  const exclusion = `!{${basenamePatterns(policy).join(",")}}`;
+  return { kind: "rewrite", rule: "recursiveSearch", input: { ...call.input, glob: exclusion }, note: `Secret Files excluded from the search (glob ${exclusion})` };
+}
+
+function quote(s: string): string {
+  return /^[A-Za-z0-9_./~@:+-]+$/.test(s) ? s : `'${s.replace(/'/g, "'\\''")}'`;
+}
+
+interface Consumer {
+  program: string[];
+  flag?: string;
+}
+
+function parseConsumer(spec: string): Consumer {
+  const parts = spec.split(/\s+/);
+  const flagAt = parts.findIndex((p) => p.startsWith("-"));
+  return flagAt < 0 ? { program: parts } : { program: parts.slice(0, flagAt), flag: parts[flagAt] };
+}
+
+/** Tokens of a command that resolve to Secret Files, with the `--flag=value` form unwrapped. */
+function secretTokens(cmd: SimpleCommand, policy: Policy, cwd: string, home: string | undefined, program: string | undefined): Array<{ token: Token; path: string; pattern: string }> {
+  const hits: Array<{ token: Token; path: string; pattern: string }> = [];
+  for (const token of cmd.tokens) {
+    const candidates = [token.text];
+    const eq = token.text.match(/^--?[A-Za-z][\w-]*=(.+)$/);
+    if (eq) candidates.push(eq[1]!);
+    // `git show HEAD:.env`, `git cat-file -p main:.env`
+    if (program === "git") {
+      const rev = token.text.match(/^[^:\s]*:(.+)$/);
+      if (rev) candidates.push(rev[1]!);
+    }
+    for (const path of candidates) {
+      if (path.startsWith("-") || path === "" || /^[A-Za-z_][A-Za-z0-9_]*=$/.test(path)) continue;
+      const pattern = secretFilePattern(path, policy, cwd, home);
+      if (pattern) {
+        hits.push({ token, path, pattern });
+        break;
+      }
+    }
+  }
+  return hits;
+}
+
+function isFetch(cmd: SimpleCommand, programIndex: number, policy: Policy): string | undefined {
+  const words = cmd.tokens.slice(programIndex).map((t) => t.text);
+  const positional = words.filter((w) => !w.startsWith("-"));
+  for (const spec of policy.fetchCommands) {
+    const parts = spec.split(/\s+/);
+    const need = parts.filter((p) => !p.startsWith("-"));
+    const flags = parts.filter((p) => p.startsWith("-"));
+    const first = positional[0]?.replace(/^.*\//, "");
+    if (first !== need[0]) continue;
+    if (!need.slice(1).every((n, i) => positional[i + 1] === n)) continue;
+    if (!flags.every((f) => words.some((w) => w === f || w.startsWith(`${f}=`)))) continue;
+    return spec;
+  }
+  return undefined;
+}
+
+function consumes(cmd: SimpleCommand, programIndex: number, program: string, hits: ReturnType<typeof secretTokens>, policy: Policy): boolean {
+  const words = cmd.tokens.map((t) => t.text);
+  for (const spec of policy.consumers.map(parseConsumer)) {
+    if (spec.program[0] !== program) continue;
+    if (!spec.program.slice(1).every((p, i) => words[programIndex + 1 + i] === p)) continue;
+    if (!spec.flag) return true;
+    const flag = spec.flag;
+    // Every Secret File token must be that flag's value (`--env-file X` or `--env-file=X`).
+    const ok = hits.every(({ token }) => {
+      const at = cmd.tokens.indexOf(token);
+      return token.text.startsWith(`${flag}=`) || (at > 0 && cmd.tokens[at - 1]!.text === flag);
+    });
+    if (ok) return true;
+  }
+  return false;
+}
+
+function bash(call: ToolCall, policy: Policy, home: string | undefined): Decision {
+  const command = typeof call.input["command"] === "string" ? call.input["command"] : "";
+  if (command.trim() === "") return { kind: "pass" };
+  const commands = parseCommand(command);
+  const cwd = call.cwd;
+  const readers: SimpleCommand[] = [];
+  let denial: Decision | undefined;
+  const rewrites: Array<{ at: number; insert: string }> = [];
+
+  for (const cmd of commands) {
+    const prog = programOf(cmd);
+    if (!prog) continue;
+    if (prog.name === "secrets-axi") continue;
+    const hits = secretTokens(cmd, policy, cwd, home, prog.name);
+    if (hits.length > 0) {
+      if (consumes(cmd, prog.index, prog.name, hits, policy)) continue;
+      readers.push(cmd);
+      if (!denial) {
+        const file = display(hits[0]!.path, cwd, home);
+        denial = { kind: "deny", rule: `secretFiles:${hits[0]!.pattern}`, file, hint: "" };
+      }
+      continue;
+    }
+    const fetch = isFetch(cmd, prog.index, policy);
+    if (fetch) {
+      readers.push(cmd);
+      if (!denial) denial = { kind: "deny", rule: `fetchCommands:${fetch}`, hint: "" };
+      continue;
+    }
+    const search = RECURSIVE_SEARCH[prog.name];
+    if (search) {
+      const words = cmd.tokens.slice(prog.index + 1).map((t) => t.text);
+      const recursive = search.always || words.some((w) => search.flags.some((f) => w === f || w.startsWith(`${f}=`))) || words.some((w) => /^-[a-zA-Z]*[rR]/.test(w) && !w.startsWith("--"));
+      const alreadyExcluded = words.some((w) => w.includes(".env"));
+      if (recursive && !alreadyExcluded) {
+        const insert = basenamePatterns(policy).flatMap((p) => search.exclude(p)).map(quote).join(" ");
+        rewrites.push({ at: cmd.tokens[prog.index]!.end, insert: ` ${insert}` });
+      }
+    }
+  }
+
+  if (denial && denial.kind === "deny") {
+    const rest = commands.filter((c) => !readers.includes(c)).map((c) => command.slice(c.start, c.end).trim()).filter(Boolean);
+    const run = rest.length > 0 ? `secrets-axi run -- ${rest.join(" && ")}` : "secrets-axi run -- <command>";
+    if (denial.rule.startsWith("fetchCommands:")) {
+      const id = fetchId(readers[0]!);
+      const awsForm = denial.rule.includes(":aws ") ? `secrets-axi run --aws-secret ${id ?? "<id>"} -- <command>` : run;
+      denial.hint = `\`${denial.rule.slice("fetchCommands:".length)}\` prints a secret value into the transcript. Run \`${awsForm}\` to inject it into a command's environment instead; \`aws secretsmanager list-secrets\` / \`describe-secret\` are fine for names`;
+    } else {
+      const file = denial.file!;
+      denial.hint = `${file} is a Secret File - reading it puts its values in the transcript. Run \`${run}\` to run with it loaded, \`secrets-axi keys ${quote(file)}\` for variable names and shapes, \`secrets-axi set ${quote(file)} KEY=value\` to change one`;
+    }
+    return denial;
+  }
+
+  if (rewrites.length > 0) {
+    let rewritten = command;
+    for (const r of rewrites.sort((a, b) => b.at - a.at)) rewritten = `${rewritten.slice(0, r.at)}${r.insert}${rewritten.slice(r.at)}`;
+    return { kind: "rewrite", rule: "recursiveSearch", input: { ...call.input, command: rewritten }, note: "Secret Files excluded from the recursive search" };
+  }
+  return { kind: "pass" };
+}
+
+function fetchId(cmd: SimpleCommand): string | undefined {
+  const words = cmd.tokens.map((t) => t.text);
+  for (const flag of ["--secret-id", "--name", "--names"]) {
+    const eq = words.find((w) => w.startsWith(`${flag}=`));
+    if (eq) return eq.slice(flag.length + 1);
+    const at = words.indexOf(flag);
+    if (at >= 0 && words[at + 1]) return words[at + 1];
+  }
+  return undefined;
+}
+
+/** For the home view and tests: the basename a Hint would show. */
+export function hintName(path: string): string {
+  return basename(path);
+}
