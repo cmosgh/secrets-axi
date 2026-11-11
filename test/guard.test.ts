@@ -104,7 +104,11 @@ describe("Bash reads", () => {
     const d = bash("source .env && pnpm dev") as { hint: string };
     expect(d.hint).toContain("`secrets-axi run -- pnpm dev`");
     const d2 = bash("set -a; source .env; set +a; node app.js") as { hint: string };
-    expect(d2.hint).toContain("`secrets-axi run -- set -a && set +a && node app.js`");
+    expect(d2.hint).toContain("`secrets-axi run -- node app.js`");
+    const d3 = bash("cd ~/work/app && grep -c . .env") as { hint: string };
+    expect(d3.hint).toContain("`secrets-axi run -- <command>`");
+    const d4 = bash("cd app && export FOO=1 && cat .env && pnpm start") as { hint: string };
+    expect(d4.hint).toContain("`secrets-axi run -- pnpm start`");
   });
 
   it.each([
