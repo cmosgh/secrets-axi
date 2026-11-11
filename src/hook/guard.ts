@@ -1,4 +1,5 @@
 // Guard decisions: deterministic, from the Policy and the literal call. Node builtins only.
+import { readdirSync } from "node:fs";
 import { basename, isAbsolute, relative, resolve } from "node:path";
 import { basenamePatterns, expandHome, globToRegExp, sampleNames, secretFilePattern, type Policy } from "../policy.js";
 import { parseCommand, programOf, type SimpleCommand, type Token } from "./tokenize.js";
@@ -169,7 +170,7 @@ function secretTokens(cmd: SimpleCommand, policy: Policy, cwd: string, home: str
     }
     for (const path of candidates) {
       if (path.startsWith("-") || path === "" || /^[A-Za-z_][A-Za-z0-9_]*=$/.test(path)) continue;
-      const pattern = secretFilePattern(path, policy, cwd, home) ?? globPattern(path, policy);
+      const pattern = secretFilePattern(path, policy, cwd, home) ?? globPattern(path, policy, cwd, home);
       if (pattern) {
         hits.push({ token, path, pattern });
         break;
@@ -210,13 +211,39 @@ function excludesSecrets(value: string, policy: Policy): boolean {
 }
 
 /** A glob token (`.env*`, `*.pem`) that could name a Secret File: tested against one sample name per pattern. */
-function globPattern(token: string, policy: Policy): string | undefined {
+/**
+ * A glob token is a read of a Secret File when one of its real matches is one (`prs/*` over markdown passes,
+ * `certs/*` over a .pem denies). When the directory cannot be listed here, it counts when it could match one.
+ */
+function globPattern(token: string, policy: Policy, cwd: string, home: string | undefined): string | undefined {
   if (!/[*?]/.test(token)) return undefined;
-  const base = token.replace(/^.*\//, "");
+  const slash = token.lastIndexOf("/");
+  const dir = slash < 0 ? "" : token.slice(0, slash + 1);
+  const base = token.slice(slash + 1);
   const re = globToRegExp(base);
+  if (!/[*?]/.test(dir)) {
+    const entries = listDir(resolve(cwd, expandHome(dir || ".", home)));
+    if (entries) {
+      // Like the shell, `*` does not expand to dotfiles unless the pattern starts with a dot.
+      const names = entries.filter((name) => (base.startsWith(".") || !name.startsWith(".")) && re.test(name));
+      for (const name of names) {
+        const pattern = secretFilePattern(dir + name, policy, cwd, home);
+        if (pattern) return pattern;
+      }
+      return undefined;
+    }
+  }
   const patterns = basenamePatterns(policy);
   const at = sampleNames(policy).findIndex((name) => re.test(name));
   return at >= 0 ? patterns[at] : undefined;
+}
+
+function listDir(dir: string): string[] | undefined {
+  try {
+    return readdirSync(dir);
+  } catch {
+    return undefined;
+  }
 }
 
 /** Tokens after `--` of a `secrets-axi run` as a command of their own: the Runner must not be a way around the Guard. */

@@ -6,7 +6,7 @@
   "check rewrite": 76,
   "check fetch": 104,
   "set": 26,
-  "policy reveal": 121,
+  "policy reveal": 142,
   "error unknown flag": 40,
   "error missing file": 30
 }

@@ -57,7 +57,7 @@ A Hint is at most two lines with the exact replacement command, real paths and n
 
 ### Runner (CLI)
 
-Masking is the boundary, the hook is the nudge: every injected value is replaced by `<VARIABLE_NAME>` in the child's stdout and stderr, unconditionally, with no flag to switch it off (values shorter than four characters are not masked).
+Masking is the boundary, the hook is the nudge: every injected value is replaced by `<VARIABLE_NAME>` in the child's stdout and stderr, unconditionally, with no flag to switch it off. Only Reveal Keys (`NODE_ENV`, `PORT`, `HOST`, `LOG_LEVEL`, `VITE_*`, ... - `secrets-axi policy reveal` lists them) and values shorter than four characters are left as they are: masking `development` would shred every path containing the word.
 
 | Command | What it does |
 | --- | --- |
@@ -119,7 +119,7 @@ Three layers, merged in order: built-in, then `~/.config/secrets-axi/policy.json
 - The Guard sees the literal command: `python -c "open('.env')"` or `$(printf '.e''nv')` pass it. The hard layer (the `Read(...)` deny rules `setup hooks` writes) and the sandbox are the boundary for those; masking covers whatever a Guarded Run prints.
 - A Secret File tracked by git leaks through `git diff` / `git log -p`; secrets-axi warns in the home view, it cannot cover it.
 - A child of a Guarded Run can read the Secret File itself; Masking still covers what it prints. A value the Runner did not inject (a different Secret File the child reads on its own) is not masked, so load it through `run` too.
-- Masking is by substring: values under four characters are not masked, and a short or common value can hit unrelated output. Encoded forms (base64, URL-encoded) are not masked yet.
+- Masking is by substring: values under four characters are not masked, and a short or common value that is not a Reveal Key can hit unrelated output (`secrets-axi policy add reveal LOG_FORMAT` fixes one such key). Encoded forms (base64, URL-encoded) are not masked yet.
 - Membership of a Secret File is by name; a secret in an unnamed file is not seen (content sniffing is deferred).
 - 0.1 resolves plain `.env` and AWS. `op`, `doppler`, `dotenvx` and `infisical` are detected and reported as "not supported yet"; the OpenCode plugin and Windows are deferred.
 
