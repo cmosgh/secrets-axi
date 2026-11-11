@@ -28,7 +28,8 @@ type Handler = (args: string[], ctx: CommandContext) => Promise<string>;
 
 function command(name: string, handler: Handler, ctx: CommandContext): (args: string[]) => Promise<string> {
   return async (args) => {
-    if (args.includes("-h") || args.includes("--help")) return (COMMAND_HELP[name] ?? "").trimEnd();
+    const own = args.includes("--") ? args.slice(0, args.indexOf("--")) : args;
+    if (own.includes("-h") || own.includes("--help")) return (COMMAND_HELP[name] ?? "").trimEnd();
     return handler(args, ctx);
   };
 }
@@ -49,7 +50,9 @@ export interface MainOptions {
 
 export async function main(options: MainOptions = {}): Promise<void> {
   const argv = options.argv ?? process.argv.slice(2);
-  const json = argv.includes("--json");
+  // Flags after `--` belong to the child command of `run`, never to secrets-axi.
+  const own = argv.includes("--") ? argv.slice(0, argv.indexOf("--")) : argv;
+  const json = own.includes("--json");
   setJsonMode(json);
   const stdout = options.stdout ?? process.stdout;
   const ctx: CommandContext = {
@@ -58,14 +61,23 @@ export async function main(options: MainOptions = {}): Promise<void> {
     ...(options.userPolicyPath !== undefined ? { userPolicyPath: options.userPolicyPath } : {}),
     ...(options.io !== undefined ? { io: options.io } : {}),
   };
+  // `run` bypasses the SDK dispatcher: its child's flags (`--help`, `--json`) are not ours, and its output is the child's.
+  if (argv[0] === "run" && !json) {
+    try {
+      const output = own.includes("-h") || own.includes("--help") ? RUN_HELP.trimEnd() : await runCommand(argv.slice(1), ctx);
+      if (output) stdout.write(`${output}\n`);
+    } catch (error) {
+      const { output, exitCode } = formatError(error);
+      stdout.write(output);
+      process.exitCode = exitCode;
+    }
+    return;
+  }
   let buffered = "";
-  // `run` streams the child's output itself and returns ""; the SDK would still print the newline after it.
-  const isRun = argv[0] === "run";
-  const plain = isRun ? { write: (chunk: string) => (chunk === "\n" ? undefined : stdout.write(chunk)) } : stdout;
   try {
     await runAxiCli({
-      argv: json ? argv.filter((a) => a !== "--json") : argv,
-      stdout: json ? { write: (chunk: string) => (buffered += chunk) } : plain,
+      argv: json ? own.filter((a) => a !== "--json") : argv,
+      stdout: json ? { write: (chunk: string) => (buffered += chunk) } : stdout,
       description: DESCRIPTION,
       version: VERSION,
       topLevelHelp: TOP_HELP,

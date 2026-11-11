@@ -1,6 +1,6 @@
 // Guard decisions: deterministic, from the Policy and the literal call. Node builtins only.
 import { basename, isAbsolute, relative, resolve } from "node:path";
-import { basenamePatterns, expandHome, secretFilePattern, type Policy } from "../policy.js";
+import { basenamePatterns, expandHome, globToRegExp, sampleNames, secretFilePattern, type Policy } from "../policy.js";
 import { parseCommand, programOf, type SimpleCommand, type Token } from "./tokenize.js";
 
 export type ToolName = "Read" | "Edit" | "Write" | "MultiEdit" | "NotebookEdit" | "Grep" | "Glob" | "Bash" | string;
@@ -155,7 +155,12 @@ function inlineLiterals(cmd: SimpleCommand, program: string): string[] {
 /** Tokens of a command that resolve to Secret Files, with the `--flag=value` form unwrapped. */
 function secretTokens(cmd: SimpleCommand, policy: Policy, cwd: string, home: string | undefined, program: string | undefined): Array<{ token: Token; path: string; pattern: string }> {
   const hits: Array<{ token: Token; path: string; pattern: string }> = [];
-  for (const token of cmd.tokens) {
+  const EXCLUSION = /^(--exclude|--exclude-dir|--ignore|--ignore-file|--glob|--iglob|-g)(=|$)/;
+  for (const [i, token] of cmd.tokens.entries()) {
+    // The value of an exclusion flag names what is NOT read.
+    if (EXCLUSION.test(token.text) && token.text.includes("=")) continue;
+    const prev = cmd.tokens[i - 1]?.text ?? "";
+    if (EXCLUSION.test(prev) && !prev.includes("=") && (token.text.startsWith("!") || /^--(exclude|ignore)/.test(prev))) continue;
     const candidates = [token.text];
     const eq = token.text.match(/^--?[A-Za-z][\w-]*=(.+)$/);
     if (eq) candidates.push(eq[1]!);
@@ -166,7 +171,7 @@ function secretTokens(cmd: SimpleCommand, policy: Policy, cwd: string, home: str
     }
     for (const path of candidates) {
       if (path.startsWith("-") || path === "" || /^[A-Za-z_][A-Za-z0-9_]*=$/.test(path)) continue;
-      const pattern = secretFilePattern(path, policy, cwd, home);
+      const pattern = secretFilePattern(path, policy, cwd, home) ?? globPattern(path, policy);
       if (pattern) {
         hits.push({ token, path, pattern });
         break;
@@ -183,6 +188,25 @@ function secretTokens(cmd: SimpleCommand, policy: Policy, cwd: string, home: str
     }
   }
   return hits;
+}
+
+/** A glob token (`.env*`, `*.pem`) that could name a Secret File: tested against one sample name per pattern. */
+function globPattern(token: string, policy: Policy): string | undefined {
+  if (!/[*?]/.test(token)) return undefined;
+  const base = token.replace(/^.*\//, "");
+  const re = globToRegExp(base);
+  const patterns = basenamePatterns(policy);
+  const at = sampleNames(policy).findIndex((name) => re.test(name));
+  return at >= 0 ? patterns[at] : undefined;
+}
+
+/** Tokens after `--` of a `secrets-axi run` as a command of their own: the Runner must not be a way around the Guard. */
+function runChild(cmd: SimpleCommand, programIndex: number): SimpleCommand | undefined {
+  if (cmd.tokens[programIndex + 1]?.text !== "run") return undefined;
+  const sep = cmd.tokens.findIndex((t, i) => i > programIndex && t.text === "--");
+  if (sep < 0 || sep === cmd.tokens.length - 1) return undefined;
+  const tokens = cmd.tokens.slice(sep + 1);
+  return { tokens, start: tokens[0]!.start, end: cmd.end };
 }
 
 function isFetch(cmd: SimpleCommand, programIndex: number, policy: Policy): string | undefined {
@@ -235,14 +259,22 @@ function bash(call: ToolCall, policy: Policy, home: string | undefined): Decisio
   let denial: Decision | undefined;
   const rewrites: Array<{ at: number; insert: string }> = [];
 
-  for (const cmd of commands) {
-    const prog = programOf(cmd);
+  for (const outer of commands) {
+    let cmd = outer;
+    let prog = programOf(cmd);
     if (!prog) continue;
-    if (prog.name === "secrets-axi") continue;
+    if (prog.name === "secrets-axi") {
+      // `keys`/`set`/`check` name the file on purpose; `run -- <child>` is judged by the child.
+      const child = runChild(cmd, prog.index);
+      const childProg = child ? programOf(child) : undefined;
+      if (!child || !childProg) continue;
+      cmd = child;
+      prog = childProg;
+    }
     const hits = secretTokens(cmd, policy, cwd, home, prog.name);
     if (hits.length > 0) {
       if (consumes(cmd, prog.index, prog.name, hits, policy)) continue;
-      readers.push(cmd);
+      readers.push(outer);
       if (!denial) {
         const file = display(hits[0]!.path, cwd, home);
         denial = { kind: "deny", rule: `secretFiles:${hits[0]!.pattern}`, file, hint: "" };
@@ -251,7 +283,7 @@ function bash(call: ToolCall, policy: Policy, home: string | undefined): Decisio
     }
     const fetch = isFetch(cmd, prog.index, policy);
     if (fetch) {
-      readers.push(cmd);
+      readers.push(outer);
       if (!denial) denial = { kind: "deny", rule: `fetchCommands:${fetch}`, hint: "" };
       continue;
     }
@@ -259,7 +291,7 @@ function bash(call: ToolCall, policy: Policy, home: string | undefined): Decisio
     if (search) {
       const words = cmd.tokens.slice(prog.index + 1).map((t) => t.text);
       const recursive = search.always || words.some((w) => search.flags.some((f) => w === f || w.startsWith(`${f}=`))) || words.some((w) => /^-[a-zA-Z]*[rR]/.test(w) && !w.startsWith("--"));
-      const alreadyExcluded = words.some((w) => w.includes(".env"));
+      const alreadyExcluded = words.some((w, i) => /^(--exclude|--ignore|--ignore-file|-g|--glob|--iglob)(=|$)/.test(w) && /[!]/.test(w.includes("=") ? w : (words[i + 1] ?? "")) || /^--exclude=/.test(w));
       if (recursive && !alreadyExcluded) {
         rewrites.push({ at: cmd.tokens[prog.index]!.end, insert: ` ${search.exclude(basenamePatterns(policy))}` });
       }

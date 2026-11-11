@@ -92,6 +92,11 @@ describe("secrets-axi commands", () => {
     expect(readFileSync(join(dir, ".env"), "utf8")).not.toContain("NEW_ONE");
     const bad = await sx("set", ".env", "no-equals");
     expect(bad.exitCode).toBe(2);
+    const stray = await sx("set", ".env", "K", `${FAKE_PW}x`);
+    expect(stray.exitCode).toBe(2);
+    expect(stray.stdout).not.toContain(FAKE_PW);
+    const cols = toon((await sx("keys", ".env", "--fields", "line")).stdout)["keys"] as Payload[];
+    expect(Object.keys(cols[0]!)).toEqual(["name", "line"]);
   });
 
   it("check explains deny, rewrite and pass with the policy rule", async () => {
@@ -130,6 +135,8 @@ describe("secrets-axi commands", () => {
     expect(missing.stdout).toContain("command not found");
     const noSep = await sx("run", "pnpm", "test");
     expect(noSep.exitCode).toBe(2);
+    const childFlags = await sx("run", "--quiet", "--", "node", "-e", "console.log(process.argv.slice(1).join(' '))", "--", "--json", "--help");
+    expect(childFlags.stdout).toBe("--json --help\n");
   });
 
   it("the hook entry denies from stdin JSON and stays silent on pass or garbage", async () => {

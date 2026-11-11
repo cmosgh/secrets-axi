@@ -29,7 +29,7 @@ export async function keysCommand(args: string[], ctx: CommandContext): Promise<
   const parsed = parseArgs(args, [{ name: "--fields" }], "secrets-axi keys");
   expectPositionals(parsed, 1, "secrets-axi keys <file>");
   const chosen = parseFields(flag(parsed, "--fields"), FIELDS);
-  const fields = (chosen.length > 0 ? chosen : ["name", "shape"]) as Array<(typeof FIELDS)[number]>;
+  const fields = (chosen.length > 0 ? ["name", ...chosen.filter((f) => f !== "name")] : ["name", "shape"]) as Array<(typeof FIELDS)[number]>;
   const raw = parsed.positionals[0]!;
   const abs = resolve(ctx.cwd, expandHome(raw, ctx.home));
   if (!existsSync(abs)) throw axiError(`no such file: ${raw}`, "NOT_FOUND", ["Run `secrets-axi` for the Secret Files in this repository"]);

@@ -25,6 +25,7 @@ const KEY = /^[A-Za-z_][A-Za-z0-9_.-]*$/;
 
 export async function setCommand(args: string[], ctx: CommandContext): Promise<string> {
   const parsed = parseArgs(args, [], "secrets-axi set");
+  if (parsed.positionals.length > 2) throw usageError("expected <file> KEY=value (2 arguments)", ["Quote the pair when the value has spaces: `secrets-axi set .env 'MSG=hello world'`"]);
   expectPositionals(parsed, 2, "secrets-axi set <file> KEY=value");
   const [rawFile, assignment] = parsed.positionals as [string, string];
   const eq = assignment.indexOf("=");

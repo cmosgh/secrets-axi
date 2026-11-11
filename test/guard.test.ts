@@ -93,7 +93,6 @@ describe("Bash reads", () => {
     "dotenv -e .env.test -- vitest",
     "dotenvx run -f .env -- node app.js",
     "op run --env-file=.env -- pnpm start",
-    "secrets-axi run -- cat .env",
     "ls -la .env",
     "rm .env.bak",
     "test -f .env && echo present",
@@ -104,6 +103,23 @@ describe("Bash reads", () => {
     "pnpm test",
   ])("passes %s", (command) => {
     expect(bash(command).kind).toBe("pass");
+  });
+
+  it("the Runner is not a way around the Guard; keys/set/check may name the file", () => {
+    expect(bash("secrets-axi run --source none -- cat .env").kind).toBe("deny");
+    expect(bash("secrets-axi run --env-file .env.test -- cat ~/.aws/credentials").kind).toBe("deny");
+    expect(bash("secrets-axi run -- aws secretsmanager get-secret-value --secret-id x").kind).toBe("deny");
+    expect(bash("secrets-axi run -- pnpm test").kind).toBe("pass");
+    expect(bash("secrets-axi keys .env && secrets-axi set .env A=1 && secrets-axi check 'cat .env'").kind).toBe("pass");
+  });
+
+  it("glob tokens that could name a Secret File are reads; dot-only names are not key files", () => {
+    expect(bash("cat .env*").kind).toBe("deny");
+    expect(bash("head certs/*.pem").kind).toBe("deny");
+    expect(bash("grep -r X --include=.env* .").kind).toBe("deny");
+    expect(bash("rg -g '.env*' TOKEN").kind).toBe("deny");
+    expect(bash("jq .key data.json").kind).toBe("pass");
+    expect(bash("cat src/*.ts").kind).toBe("pass");
   });
 
   it("a consumer that takes the file only as its flag value does not excuse other reads", () => {
@@ -144,6 +160,7 @@ describe("Bash recursive search", () => {
     expect(bash("rg TODO | head -3").kind).toBe("rewrite");
     expect(bash("grep TODO src/a.ts").kind).toBe("pass");
     expect(bash("rg TODO -g '!.env*'").kind).toBe("pass");
+    expect(bash("grep -r TODO --exclude=.env .").kind).toBe("pass");
   });
 });
 

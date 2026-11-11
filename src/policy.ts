@@ -179,7 +179,13 @@ export function findRepoPolicy(cwd: string): string | undefined {
 /** `*` and `?` glob on one path segment (or a whole path when the pattern has `/`). */
 export function globToRegExp(pattern: string): RegExp {
   const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]");
-  return new RegExp(`^${escaped}$`);
+  // A leading `*` needs one character: `*.key` names key files, not a bare `.key` (a jq filter, a dotfile).
+  return new RegExp(`^${escaped.startsWith("[^/]*") ? `[^/]+${escaped.slice(5)}` : escaped}$`);
+}
+
+/** One concrete name per basename pattern (`.env.*` → `.env.x`), to test whether a glob token could name a Secret File. */
+export function sampleNames(policy: Policy): string[] {
+  return basenamePatterns(policy).map((p) => p.replace(/^\*/, "x").replace(/\*/g, "x").replace(/\?/g, "x"));
 }
 
 export function matchesAny(name: string, patterns: readonly string[]): string | undefined {
