@@ -109,6 +109,6 @@ export async function setupCommand(args: string[], ctx: SetupContext): Promise<s
   }
   return out(
     block({ guard: { ...lines, status: "installed" }, hook: hookCommand }),
-    helpBlock(["Restart the agent session so the hooks load"]),
+    helpBlock(["The Guard is active now in Claude Code (hooks reload mid-session); restart the session for the secrets overview at session start, and for Codex"]),
   );
 }
