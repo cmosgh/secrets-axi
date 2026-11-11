@@ -323,7 +323,11 @@ function bash(call: ToolCall, policy: Policy, home: string | undefined): Decisio
   }
 
   if (denial && denial.kind === "deny") {
-    const rest = commands.filter((c) => !readers.includes(c)).map((c) => command.slice(c.start, c.end).trim()).filter(Boolean);
+    // The suggestion keeps what the agent meant to run; shell setup (`cd x`, `set -a`) is not that.
+    const rest = commands
+      .filter((c) => !readers.includes(c) && !SETUP_ONLY.has(programOf(c)?.name ?? ""))
+      .map((c) => command.slice(c.start, c.end).trim())
+      .filter(Boolean);
     const run = rest.length > 0 ? `secrets-axi run -- ${rest.join(" && ")}` : "secrets-axi run -- <command>";
     if (denial.rule.startsWith("fetchCommands:")) {
       const id = fetchId(readers[0]!);
@@ -343,6 +347,8 @@ function bash(call: ToolCall, policy: Policy, home: string | undefined): Decisio
   }
   return { kind: "pass" };
 }
+
+const SETUP_ONLY = new Set(["cd", "pushd", "popd", "set", "export", "unset", "shopt", "ulimit", "umask", "true", ":"]);
 
 function fetchId(cmd: SimpleCommand): string | undefined {
   const words = cmd.tokens.map((t) => t.text);
