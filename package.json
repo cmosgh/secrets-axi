@@ -1,7 +1,7 @@
 {
   "name": "secrets-axi",
   "version": "0.1.0",
-  "description": "AXI-compliant secrets guard for agents - a hook that denies .env and credential reads with the right command instead, and a runner that injects secrets into a child process with masked output",
+  "description": "Secrets guard CLI for agents - denies .env and credential reads with the right command instead, runs commands with secrets injected and output masked, lists variable names and shapes without values",
   "type": "module",
   "keywords": [
     "secrets",
