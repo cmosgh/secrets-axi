@@ -158,6 +158,18 @@ describe("Bash reads", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("git exclude pathspecs are not reads; a command after a shell keyword is judged by its own program", () => {
+    expect(bash(`git grep -n "foo" -- '*.js' ':!**/spec/**' | grep -v bar | head -12`).kind).toBe("pass");
+    expect(bash("git grep foo -- . ':(exclude).env' ':^.env.local'").kind).toBe("pass");
+    expect(bash("git show :.env").kind).toBe("deny");
+    expect(bash("git grep foo -- ':(glob).env'").kind).toBe("deny");
+    expect(bash("for r in a b; do secrets-axi run --env-file .env -- node x.js; done").kind).toBe("pass");
+    expect(bash("if true; then secrets-axi run --env-file .env -- node x.js; fi").kind).toBe("pass");
+    expect(bash("for r in a b; do cat .env; done").kind).toBe("deny");
+    expect(bash("while true; do source .env; done").kind).toBe("deny");
+    expect(bash("! cat .env").kind).toBe("deny");
+  });
+
   it("glob tokens that could name a Secret File are reads; dot-only names are not key files", () => {
     expect(bash("cat .env*").kind).toBe("deny");
     expect(bash("head certs/*.pem").kind).toBe("deny");

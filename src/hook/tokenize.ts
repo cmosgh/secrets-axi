@@ -244,12 +244,15 @@ const WRAPPERS: Record<string, string[]> = {
 };
 
 /** The program of a simple command: skips `VAR=x` assignments and common wrappers with their options. */
+/** Shell keywords that start a segment before the command they introduce (`do cat .env`, `then node x`). */
+const KEYWORDS = new Set(["do", "then", "else", "elif", "if", "while", "until", "!", "{"]);
+
 export function programOf(cmd: SimpleCommand): { name: string; index: number } | undefined {
   let i = 0;
   const tokens = cmd.tokens;
   while (i < tokens.length) {
     const t = tokens[i]!;
-    if (t.redirect || /^[A-Za-z_][A-Za-z0-9_]*=/.test(t.text)) {
+    if (t.redirect || /^[A-Za-z_][A-Za-z0-9_]*=/.test(t.text) || KEYWORDS.has(t.text)) {
       i++;
       continue;
     }

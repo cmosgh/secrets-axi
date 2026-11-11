@@ -160,6 +160,8 @@ function secretTokens(cmd: SimpleCommand, policy: Policy, cwd: string, home: str
   for (const [i, token] of cmd.tokens.entries()) {
     // The value of an exclusion names what is NOT read: `--exclude=X`, `--ignore X`, `-g '!X'` (a plain `-g X` includes).
     if (exclusionValue(token.text, cmd.tokens[i - 1]?.text) !== undefined) continue;
+    // Git exclude pathspecs (`:!x`, `:^x`, `:(exclude)x`) name what is not read, like `--exclude`.
+    if (program === "git" && /^:(!|\^|\([^)]*\bexclude\b[^)]*\))/.test(token.text)) continue;
     const candidates = [token.text];
     const eq = token.text.match(/^--?[A-Za-z][\w-]*=(.+)$/);
     if (eq) candidates.push(eq[1]!);
@@ -167,6 +169,8 @@ function secretTokens(cmd: SimpleCommand, policy: Policy, cwd: string, home: str
     if (program === "git") {
       const rev = token.text.match(/^[^:\s]*:(.+)$/);
       if (rev) candidates.push(rev[1]!);
+      const magic = token.text.match(/^:\([^)]*\)(.+)$/); // `:(glob).env`, `:(top,icase).env`
+      if (magic) candidates.push(magic[1]!);
     }
     for (const path of candidates) {
       if (path.startsWith("-") || path === "" || /^[A-Za-z_][A-Za-z0-9_]*=$/.test(path)) continue;
