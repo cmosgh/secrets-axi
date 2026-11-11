@@ -139,13 +139,14 @@ const INLINE_CODE: Record<string, string[]> = {
 
 /** String literals of inline code (`python -c '... open(".env") ...'`): each is a path candidate. */
 function inlineLiterals(cmd: SimpleCommand, program: string): string[] {
-  const flags = INLINE_CODE[program];
+  const flags = INLINE_CODE[program] ?? (cmd.tokens.some((t) => t.heredoc) ? [] : undefined);
   if (!flags) return [];
   const out: string[] = [];
   const words = cmd.tokens.map((t) => t.text);
   for (let i = 0; i < words.length; i++) {
-    if (!flags.includes(words[i]!)) continue;
-    const code = words[i + 1] ?? "";
+    const viaHeredoc = cmd.tokens[i]!.heredoc === true;
+    if (!viaHeredoc && !flags.includes(words[i]!)) continue;
+    const code = viaHeredoc ? words[i]! : (words[i + 1] ?? "");
     for (const m of code.matchAll(/(["'`])([^"'`\n]{1,200})\1/g)) out.push(m[2]!);
     if (program.endsWith("sh")) for (const inner of parseCommand(code)) out.push(...inner.tokens.map((t) => t.text));
   }

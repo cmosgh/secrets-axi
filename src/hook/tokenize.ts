@@ -8,6 +8,8 @@ export interface Token {
   end: number;
   /** Target of a redirection (`< .env`, `>> out`). */
   redirect?: boolean;
+  /** Body of a heredoc fed to an interpreter (`python3 - <<EOF`): code, scanned for string literals like `-c` code. */
+  heredoc?: boolean;
 }
 
 export interface SimpleCommand {
@@ -34,7 +36,7 @@ function split(text: string, base: number, out: SimpleCommand[], depth: number):
   let curStart = -1;
   let redirectNext = false;
   // Heredoc delimiters seen on the current line; their bodies start after the next newline and are data, not commands.
-  const heredocs: Array<{ delimiter: string; stripTabs: boolean }> = [];
+  const heredocs: Array<{ delimiter: string; stripTabs: boolean; quoted: boolean }> = [];
   let i = 0;
 
   const flush = (): void => {
@@ -122,7 +124,8 @@ function split(text: string, base: number, out: SimpleCommand[], depth: number):
       i += op.length;
       cmdStart = i;
       if (op === "\n" && heredocs.length > 0) {
-        i = skipHeredocBodies(text, i, heredocs.splice(0));
+        const fed = out[out.length - 1];
+        i = readHeredocBodies(text, i, heredocs.splice(0), (body, at, quoted) => heredocBody(body, base + at, quoted, fed, out, depth));
         cmdStart = i;
       }
       continue;
@@ -135,7 +138,7 @@ function split(text: string, base: number, out: SimpleCommand[], depth: number):
       if (kind === "<<" || kind === "<<-") {
         const word = text.slice(i).match(/^(?:'([^']*)'|"([^"]*)"|\\?([^\s;|&()<>]+))/);
         if (word) {
-          heredocs.push({ delimiter: word[1] ?? word[2] ?? word[3]!, stripTabs: kind === "<<-" });
+          heredocs.push({ delimiter: word[1] ?? word[2] ?? word[3]!, stripTabs: kind === "<<-", quoted: word[3] === undefined || word[0].startsWith("\\") });
           i += word[0].length;
         }
         continue;
@@ -155,19 +158,48 @@ function split(text: string, base: number, out: SimpleCommand[], depth: number):
   endCommand(text.length);
 }
 
-/** Index just past the terminator lines of the given heredocs, in order; an unterminated body runs to the end. */
-function skipHeredocBodies(text: string, from: number, docs: Array<{ delimiter: string; stripTabs: boolean }>): number {
+/** Index just past the terminator lines of the given heredocs, in order; an unterminated body runs to the end. Each body is handed to `onBody`. */
+function readHeredocBodies(
+  text: string,
+  from: number,
+  docs: Array<{ delimiter: string; stripTabs: boolean; quoted: boolean }>,
+  onBody: (body: string, at: number, quoted: boolean) => void,
+): number {
   let i = from;
   for (const doc of docs) {
+    const start = i;
+    let end = text.length;
     for (;;) {
-      if (i >= text.length) return text.length;
+      if (i >= text.length) break;
       const nl = text.indexOf("\n", i);
       const line = text.slice(i, nl < 0 ? text.length : nl);
+      end = i;
       i = nl < 0 ? text.length : nl + 1;
       if ((doc.stripTabs ? line.replace(/^\t+/, "") : line) === doc.delimiter) break;
+      end = i;
     }
+    onBody(text.slice(start, end), start, doc.quoted);
   }
   return i;
+}
+
+const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish"]);
+const INTERPRETERS = new Set(["python", "python3", "python2", "node", "bun", "deno", "ruby", "perl", "php", "osascript"]);
+
+/**
+ * A heredoc body is data, except where bash runs it: a shell reads it as commands, an interpreter as code
+ * (string literals are path candidates), and an unquoted delimiter expands `$(...)` and backticks inside it.
+ */
+function heredocBody(body: string, at: number, quoted: boolean, fed: SimpleCommand | undefined, out: SimpleCommand[], depth: number): void {
+  const prog = fed ? programOf(fed) : undefined;
+  if (prog && SHELLS.has(prog.name)) {
+    split(body, at, out, depth + 1);
+    return;
+  }
+  if (!quoted) {
+    for (const m of body.matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)) split(m[1] ?? m[2] ?? "", at + m.index + (m[1] !== undefined ? 2 : 1), out, depth + 1);
+  }
+  if (prog && fed && INTERPRETERS.has(prog.name)) fed.tokens.push({ text: body, start: at, end: at + body.length, heredoc: true });
 }
 
 function two_at(text: string, i: number): string {

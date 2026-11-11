@@ -23,8 +23,19 @@ describe("tokenizer", () => {
     expect(parseCommand(cmd).map((c) => c.tokens.map((t) => t.text).join(" "))).toEqual(["cd notes", "cat note.md", "echo done"]);
     expect(bash(cmd).kind).toBe("pass");
     expect(bash("cat <<-EOF > out.txt\n\t.env\n\tEOF\ncat .env").kind).toBe("deny");
-    expect(bash("python3 - <<EOF\nprint(open('.env').read())\nEOF").kind).toBe("pass");
     expect(bash("cat .env <<EOF\nx\nEOF").kind).toBe("deny");
+  });
+
+  it("heredoc bodies that bash executes or expands are not data", () => {
+    expect(bash("bash <<EOF\ncat .env\nEOF").kind).toBe("deny");
+    expect(bash("sh <<'EOF'\nsource .env; node app.js\nEOF").kind).toBe("deny");
+    expect(bash("cat <<EOF\n$(cat .env)\nEOF").kind).toBe("deny");
+    expect(bash("cat <<EOF\n`cat .env`\nEOF").kind).toBe("deny");
+    expect(bash("cat <<'EOF'\n$(cat .env)\nEOF").kind).toBe("pass");
+    expect(bash("python3 - <<EOF\nprint(open('.env').read())\nEOF").kind).toBe("deny");
+    expect(bash("node <<'EOF'\nrequire('fs').readFileSync('.env')\nEOF").kind).toBe("deny");
+    expect(bash("python3 - <<EOF\nprint('.env is loaded by secrets-axi')\nEOF").kind).toBe("pass");
+    expect(bash("cat > README.md <<EOF\nRun secrets-axi run -- x instead of source .env\nEOF").kind).toBe("pass");
   });
 
   it("skips wrappers and their options to find the program", () => {
