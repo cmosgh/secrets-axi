@@ -18,6 +18,15 @@ describe("tokenizer", () => {
     expect(texts).toEqual(["cat .env", "xargs", "export $(cat .env | xargs)", "FOO=a b node -e x <.env.local", "cat x", "echo `cat x`"]);
     expect(programOf(cmds[3]!)).toEqual({ name: "node", index: 1 });
   });
+  it("heredoc bodies are data: mentions of .env inside them are neither reads nor commands", () => {
+    const cmd = "cd notes && cat > note.md <<'EOF'\nUse `secrets-axi run --env-file .env -- x` instead of `set -a; source .env; set +a`.\ncat .env\nEOF\necho done";
+    expect(parseCommand(cmd).map((c) => c.tokens.map((t) => t.text).join(" "))).toEqual(["cd notes", "cat note.md", "echo done"]);
+    expect(bash(cmd).kind).toBe("pass");
+    expect(bash("cat <<-EOF > out.txt\n\t.env\n\tEOF\ncat .env").kind).toBe("deny");
+    expect(bash("python3 - <<EOF\nprint(open('.env').read())\nEOF").kind).toBe("pass");
+    expect(bash("cat .env <<EOF\nx\nEOF").kind).toBe("deny");
+  });
+
   it("skips wrappers and their options to find the program", () => {
     const [cmd] = parseCommand("sudo -u app env FOO=1 timeout 5 /usr/bin/cat .env");
     expect(programOf(cmd!)).toMatchObject({ name: "cat" });

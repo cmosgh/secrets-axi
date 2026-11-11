@@ -33,6 +33,8 @@ function split(text: string, base: number, out: SimpleCommand[], depth: number):
   let cur = "";
   let curStart = -1;
   let redirectNext = false;
+  // Heredoc delimiters seen on the current line; their bodies start after the next newline and are data, not commands.
+  const heredocs: Array<{ delimiter: string; stripTabs: boolean }> = [];
   let i = 0;
 
   const flush = (): void => {
@@ -119,13 +121,26 @@ function split(text: string, base: number, out: SimpleCommand[], depth: number):
       endCommand(i);
       i += op.length;
       cmdStart = i;
+      if (op === "\n" && heredocs.length > 0) {
+        i = skipHeredocBodies(text, i, heredocs.splice(0));
+        cmdStart = i;
+      }
       continue;
     }
-    const redirect = text.slice(i).match(/^(\d*)(>>|>&|<&|>\||<<<|<<|>|<)/);
+    const redirect = text.slice(i).match(/^(\d*)(>>|>&|<&|>\||<<<|<<-|<<|>|<)/);
     if (redirect && curStart < 0) {
       i += redirect[0].length;
-      redirectNext = redirect[2] !== "<<" && redirect[2] !== "<<<" && !/^[<>]&/.test(redirect[2]!);
       while (text[i] === " " || text[i] === "\t") i++;
+      const kind = redirect[2]!;
+      if (kind === "<<" || kind === "<<-") {
+        const word = text.slice(i).match(/^(?:'([^']*)'|"([^"]*)"|\\?([^\s;|&()<>]+))/);
+        if (word) {
+          heredocs.push({ delimiter: word[1] ?? word[2] ?? word[3]!, stripTabs: kind === "<<-" });
+          i += word[0].length;
+        }
+        continue;
+      }
+      redirectNext = kind !== "<<<" && !/^[<>]&/.test(kind);
       continue;
     }
     if (c === " " || c === "\t" || c === "\r") {
@@ -138,6 +153,21 @@ function split(text: string, base: number, out: SimpleCommand[], depth: number):
     i++;
   }
   endCommand(text.length);
+}
+
+/** Index just past the terminator lines of the given heredocs, in order; an unterminated body runs to the end. */
+function skipHeredocBodies(text: string, from: number, docs: Array<{ delimiter: string; stripTabs: boolean }>): number {
+  let i = from;
+  for (const doc of docs) {
+    for (;;) {
+      if (i >= text.length) return text.length;
+      const nl = text.indexOf("\n", i);
+      const line = text.slice(i, nl < 0 ? text.length : nl);
+      i = nl < 0 ? text.length : nl + 1;
+      if ((doc.stripTabs ? line.replace(/^\t+/, "") : line) === doc.delimiter) break;
+    }
+  }
+  return i;
 }
 
 function two_at(text: string, i: number): string {
