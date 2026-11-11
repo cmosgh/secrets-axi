@@ -122,12 +122,12 @@ describe("secrets-axi commands", () => {
   it("run injects the env, masks values in stdout and stderr, keeps the exit code, honours --env-file and --source none", async () => {
     const ok = await sx("run", "--", "node", "src/app.js");
     expect(ok.exitCode).toBe(0);
-    expect(ok.stdout).toBe("<API_TOKEN> <PORT> undefined\n");
+    expect(ok.stdout).toBe("<API_TOKEN> 3000 undefined\n"); // PORT is a Reveal Key: not masked
     expect(ok.stderr).toContain("secrets-axi: 6 variables (6 from .env) - output masked");
     const test = await sx("run", "--env-file", ".env.test", "--quiet", "--", "node", "-e", "console.log(process.env.PORT, process.env.API_TOKEN); console.error('port ' + process.env.PORT); process.exit(3)");
     expect(test.exitCode).toBe(3);
-    expect(test.stdout).toBe("<PORT> undefined\n");
-    expect(test.stderr).toBe("port <PORT>\n");
+    expect(test.stdout).toBe("3001 undefined\n");
+    expect(test.stderr).toBe("port 3001\n");
     const none = await sx("run", "--source", "none", "--quiet", "--", "node", "-e", "console.log(process.env.API_TOKEN)");
     expect(none.stdout).toBe("undefined\n");
     const missing = await sx("run", "--", "definitely-not-a-command-xyz");

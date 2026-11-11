@@ -13,7 +13,7 @@ Agent runtimes expose a pre-tool hook (`PreToolUse` in Claude Code and Codex, `t
 Two places could be "the" security line:
 
 - **The hook**: block every way to read a Secret File. Unwinnable against a shell; every miss is a leak.
-- **The Runner's output**: whatever runs, every injected value is replaced in stdout/stderr before the agent sees it.
+- **The Runner's output**: whatever runs, every injected value is replaced in stdout/stderr before the agent sees it (amended 0.1.4: except the values of Reveal Keys, which the Policy already declares public).
 
 ## Decision
 

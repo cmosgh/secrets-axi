@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { decide, type Decision, type ToolCall } from "../src/hook/guard.js";
 import { hookOutput } from "../src/hook/entry.js";
@@ -135,6 +138,24 @@ describe("Bash reads", () => {
     expect(bash("secrets-axi run -- aws secretsmanager get-secret-value --secret-id x").kind).toBe("deny");
     expect(bash("secrets-axi run -- pnpm test").kind).toBe("pass");
     expect(bash("secrets-axi keys .env && secrets-axi set .env A=1 && secrets-axi check 'cat .env'").kind).toBe("pass");
+  });
+
+  it("a glob is a read when a real match is a Secret File; an unlistable directory counts when it could match one", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sx-glob-"));
+    for (const d of ["prs", "certs"]) mkdirSync(join(dir, d));
+    writeFileSync(join(dir, "prs", "PR-LIST.md"), "x");
+    writeFileSync(join(dir, "prs", "rows.json"), "{}");
+    writeFileSync(join(dir, "certs", "server.pem"), "x");
+    writeFileSync(join(dir, "certs", "README"), "x");
+    writeFileSync(join(dir, ".env"), "A=1\n");
+    const at = (command: string): string => decide(call("Bash", { command }, dir), BUILTIN, { home: HOME }).kind;
+    expect(at("cat DECISIONS.md prs/* 2>/dev/null | sort -u > out.txt")).toBe("pass");
+    expect(at("cat *")).toBe("pass");
+    expect(at("cat .env*")).toBe("deny");
+    expect(at("cat certs/*")).toBe("deny");
+    expect(at("head certs/*.pem")).toBe("deny");
+    expect(at("cat missing/*")).toBe("deny");
+    rmSync(dir, { recursive: true, force: true });
   });
 
   it("glob tokens that could name a Secret File are reads; dot-only names are not key files", () => {

@@ -40,11 +40,11 @@ Where a Guarded Run gets its values from, detected from what is in the repositor
 
 ## Masking
 
-Replacing every injected value in a Guarded Run's output with the name of its variable, `<DB_PASSWORD>`. Values shorter than four characters are not masked. Masking cannot be switched off.
+Replacing every injected value in a Guarded Run's output with the name of its variable, `<DB_PASSWORD>`. Values of Reveal Keys and values shorter than four characters are not masked. Masking cannot be switched off.
 
 ## Reveal Key
 
-A variable whose value is not secret and may be shown by a key listing: a built-in list of public names (`NODE_ENV`, `PORT`, `HOST`, ...) the Policy can extend.
+A variable whose value is not secret: a key listing may show it and Masking leaves it alone. A built-in list of public names (`NODE_ENV`, `PORT`, `HOST`, ...) the Policy can extend.
 
 ## Key listing
 

@@ -3,7 +3,7 @@ import { bool, flag, flags, parseArgs } from "../args.js";
 import type { CommandContext } from "../context.js";
 import { axiError, usageError } from "../errors.js";
 import { MaskStream, maskTable } from "../mask.js";
-import { loadPolicy } from "../policy.js";
+import { isRevealKey, loadPolicy } from "../policy.js";
 import { isJsonMode } from "../render.js";
 import { fetchAwsSecrets, parseAwsSpec } from "../sources/aws.js";
 import { detectSource, SUPPORTED } from "../sources/detect.js";
@@ -70,14 +70,22 @@ export async function runCommand(args: string[], ctx: CommandContext): Promise<s
   if (!bool(parsed, "--quiet")) {
     io.stderr.write(`secrets-axi: ${env.size} variables (${from.length > 0 ? from.join("; ") : "none"}) - output masked\n`);
   }
-  const code = await spawnMasked(command, env, ctx.cwd, io);
+  // Reveal Keys (NODE_ENV, PORT, ...) are public by Policy: masking them shreds paths and ports in the output.
+  const masked = new Map([...env].filter(([name]) => !isRevealKey(name, policy)));
+  const code = await spawnMasked(command, env, ctx.cwd, io, masked);
   process.exitCode = code;
   return "";
 }
 
-/** Spawn with the merged environment; stdout and stderr pass through one MaskStream each. */
-export function spawnMasked(command: string[], env: Map<string, string>, cwd: string, io: { stdout: NodeJS.WritableStream; stderr: NodeJS.WritableStream }): Promise<number> {
-  const table = maskTable(env);
+/** Spawn with the merged environment; stdout and stderr pass through one MaskStream each over `masked` (default: everything injected). */
+export function spawnMasked(
+  command: string[],
+  env: Map<string, string>,
+  cwd: string,
+  io: { stdout: NodeJS.WritableStream; stderr: NodeJS.WritableStream },
+  masked: ReadonlyMap<string, string> = env,
+): Promise<number> {
+  const table = maskTable(masked);
   const childEnv = { ...process.env, ...Object.fromEntries(env) };
   return new Promise((resolve, reject) => {
     const child = spawn(command[0]!, command.slice(1), { cwd, env: childEnv, stdio: ["inherit", "pipe", "pipe"] });
