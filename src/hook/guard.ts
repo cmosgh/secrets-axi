@@ -162,6 +162,8 @@ function secretTokens(cmd: SimpleCommand, policy: Policy, cwd: string, home: str
     if (exclusionValue(token.text, cmd.tokens[i - 1]?.text) !== undefined) continue;
     // Git exclude pathspecs (`:!x`, `:^x`, `:(exclude)x`) name what is not read, like `--exclude`.
     if (program === "git" && /^:(!|\^|\([^)]*\bexclude\b[^)]*\))/.test(token.text)) continue;
+    // `find -path X` matches names; without an action that runs something, find only lists paths.
+    if (program === "find" && FIND_TESTS.has(cmd.tokens[i - 1]?.text ?? "") && !cmd.tokens.some((t) => FIND_ACTIONS.has(t.text))) continue;
     const candidates = [token.text];
     const eq = token.text.match(/^--?[A-Za-z][\w-]*=(.+)$/);
     if (eq) candidates.push(eq[1]!);
@@ -193,7 +195,10 @@ function secretTokens(cmd: SimpleCommand, policy: Policy, cwd: string, home: str
   return hits;
 }
 
-const ALWAYS_EXCLUDES = /^(--exclude|--exclude-dir|--ignore|--ignore-file)(=|$)/;
+const FIND_TESTS = new Set(["-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex", "-lname", "-ilname"]);
+const FIND_ACTIONS = new Set(["-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"]);
+
+const ALWAYS_EXCLUDES =/^(--exclude|--exclude-dir|--ignore|--ignore-file)(=|$)/;
 const GLOB_FLAGS = /^(--glob|--iglob|-g)(=|$)/;
 
 /** The pattern an exclusion token (or flag value) excludes, or undefined when the token is not an exclusion. */
@@ -238,7 +243,7 @@ function globPattern(token: string, policy: Policy, cwd: string, home: string | 
     }
   }
   const patterns = basenamePatterns(policy);
-  const at = sampleNames(policy).findIndex((name) => re.test(name));
+  const at = sampleNames(policy).findIndex((name) => (base.startsWith(".") || !name.startsWith(".")) && re.test(name));
   return at >= 0 ? patterns[at] : undefined;
 }
 
@@ -376,12 +381,7 @@ function bash(call: ToolCall, policy: Policy, home: string | undefined): Decisio
   }
 
   if (denial && denial.kind === "deny") {
-    // The suggestion keeps what the agent meant to run; shell setup (`cd x`, `set -a`) is not that.
-    const rest = commands
-      .filter((c) => !readers.includes(c) && !SETUP_ONLY.has(programOf(c)?.name ?? ""))
-      .map((c) => command.slice(c.start, c.end).trim())
-      .filter(Boolean);
-    const run = `secrets-axi run ${envFileFlags(envReads, policy, cwd)}-- ${rest.length > 0 ? rest.join(" && ") : "<command>"}`;
+    const run = `secrets-axi run ${envFileFlags(envReads, policy, cwd)}-- ${runTarget(command, commands, readers)}`;
     if (denial.rule.startsWith("fetchCommands:")) {
       const id = fetchId(readers[0]!);
       const awsForm = denial.rule.includes(":aws ") ? `secrets-axi run --aws-secret ${id ?? "<id>"} -- <command>` : run;
@@ -400,6 +400,30 @@ function bash(call: ToolCall, policy: Policy, home: string | undefined): Decisio
   }
   return { kind: "pass" };
 }
+
+/**
+ * What the Hint puts after `run --`: the commands the agent meant, without the reads and shell setup (`cd x`, `set -a`).
+ * The Runner spawns without a shell, so a list becomes `sh -c '...'`; a read inside a pipeline, subshell, group or
+ * substitution cannot be cut out faithfully, so those get the `<command>` placeholder.
+ */
+function runTarget(command: string, commands: SimpleCommand[], readers: SimpleCommand[]): string {
+  const inside = (a: SimpleCommand, b: SimpleCommand): boolean => a !== b && a.start >= b.start && a.end <= b.end;
+  const top = commands.filter((c) => !commands.some((o) => inside(c, o))).sort((a, b) => a.start - b.start);
+  if (readers.some((r) => !top.includes(r))) return "<command>";
+  // Only `&&`, `;` and newlines between commands: anything else (`|`, `||`, `(`, `{`, heredoc bodies) is a shell structure.
+  const seps = top.map((c, i) => (i === 0 ? "" : command.slice(top[i - 1]!.end, c.start).trim()));
+  if (seps.some((s) => s !== "" && s !== "&&" && s !== ";")) return "<command>";
+  if (top.some((c) => SHELL_KEYWORDS.has(c.tokens[0]?.text ?? ""))) return "<command>";
+  const keep = top
+    .map((c, i) => ({ c, sep: seps[i] || ";", text: command.slice(c.start, c.end).trim() }))
+    .filter(({ c, text }) => text !== "" && !readers.includes(c) && !SETUP_ONLY.has(programOf(c)?.name ?? ""));
+  if (!keep.some(({ c }) => programOf(c))) return "<command>";
+  const only = keep.length === 1 ? keep[0]! : undefined;
+  if (only && programOf(only.c)!.index === 0) return only.text;
+  return `sh -c ${quote(keep.map(({ sep, text }, i) => (i === 0 ? text : `${sep === ";" ? ";" : ` ${sep}`} ${text}`)).join(""))}`;
+}
+
+const SHELL_KEYWORDS = new Set(["for", "while", "until", "if", "then", "elif", "else", "fi", "do", "done", "case", "esac", "select", "function", "!"]);
 
 const SETUP_ONLY = new Set(["cd", "pushd", "popd", "set", "export", "unset", "shopt", "ulimit", "umask", "true", ":"]);
 

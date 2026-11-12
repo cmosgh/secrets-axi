@@ -99,6 +99,7 @@ describe("Bash reads", () => {
     "git show HEAD:.env",
     "python3 -c 'print(open(\".env\").read())'",
     "cp .env /tmp/x && cat /tmp/x",
+    "find . -name .env -exec cat {} ;",
   ])("denies %s", (command) => {
     expect(bash(command).kind).toBe("deny");
   });
@@ -112,6 +113,20 @@ describe("Bash reads", () => {
     expect(d3.hint).toContain("`secrets-axi run -- <command>`");
     const d4 = bash("cd app && export FOO=1 && cat .env && pnpm start") as { hint: string };
     expect(d4.hint).toContain("`secrets-axi run -- pnpm start`");
+  });
+
+  it("the Hint runs a command list through sh -c and never mangles shell structure", () => {
+    const list = bash("B=x; cat .env && make build && make test") as { hint: string };
+    expect(list.hint).toContain("`secrets-axi run -- sh -c 'B=x && make build && make test'`");
+    for (const command of [
+      "cat .env; git log | head -1",
+      "cat .env; (cd w && npx husky; git log -1)",
+      "echo $(cat .env) && make",
+      "for f in a b; do cat .env; done",
+      "B=x; cat .env",
+    ]) {
+      expect((bash(command) as { hint: string }).hint, command).toContain("`secrets-axi run -- <command>`");
+    }
   });
 
   it.each([
@@ -128,6 +143,8 @@ describe("Bash reads", () => {
     "mv .env.local .env.local.bak",
     "ln -s ../../.env apps/web/.env",
     "cp .env.local apps/",
+    'find apps -name "route-authz*" -not -path "*/node_modules/*"',
+    "find . -name .env",
     "test -f .env && echo present",
     "git add .env.example",
     "cat .env.example",
