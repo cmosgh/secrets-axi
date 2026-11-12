@@ -250,6 +250,19 @@ describe("Bash over ssh", () => {
     expect(bash("ssh -p 22 host1 cat .env").kind).toBe("deny");
     expect(bash("ssh host1 aws secretsmanager get-secret-value --secret-id p/db").kind).toBe("deny");
   });
+  it("judges bash -c / -lc code command by command, under sudo and ssh too", () => {
+    const d = bash(`ssh h1 'sudo -n -u w bash -lc "grep TOKEN /apps/x/.env"'`) as { file: string; hint: string };
+    expect(d.file).toBe("/apps/x/.env");
+    expect(d.hint).toContain("`ssh h1 npx -y secrets-axi keys /apps/x/.env`");
+    expect((bash('sudo -u w bash -lc "source .env && node x.js"') as { file: string }).file).toBe(".env");
+    expect(bash('bash -c "cat .env"').kind).toBe("deny");
+  });
+  it("an output redirection writes the Secret File, it does not read it", () => {
+    expect(bash('printf "A=1\\n" >> .env').kind).toBe("pass");
+    expect(bash(`ssh h1 'sudo -n -u w bash -c "printf \\"T=%s\\" \\"\\$(cat /home/w/.token)\\" >> /apps/x/.env"'`).kind).toBe("pass");
+    expect(bash("cat .env > copy.txt").kind).toBe("deny");
+    expect(bash("cat < .env").kind).toBe("deny");
+  });
   it.each(["ssh host1 npx -y secrets-axi keys /apps/x/.env", "ssh host1 'rm /apps/x/.env.bak'", "ssh host1 uptime", "ssh host1", "npx -y secrets-axi keys .env"])("passes %s", (command) => {
     expect(bash(command).kind).toBe("pass");
   });

@@ -130,11 +130,6 @@ const INLINE_CODE: Record<string, string[]> = {
   ruby: ["-e"],
   perl: ["-e", "-E"],
   php: ["-r"],
-  sh: ["-c"],
-  bash: ["-c"],
-  zsh: ["-c"],
-  dash: ["-c"],
-  fish: ["-c"],
   osascript: ["-e"],
 };
 
@@ -158,6 +153,8 @@ function inlineLiterals(cmd: SimpleCommand, program: string): string[] {
 function secretTokens(cmd: SimpleCommand, policy: Policy, cwd: string, home: string | undefined, program: string | undefined): Array<{ token: Token; path: string; pattern: string }> {
   const hits: Array<{ token: Token; path: string; pattern: string }> = [];
   for (const [i, token] of cmd.tokens.entries()) {
+    // `>> .env` writes the file; nothing of it reaches the transcript.
+    if (token.output) continue;
     // The value of an exclusion names what is NOT read: `--exclude=X`, `--ignore X`, `-g '!X'` (a plain `-g X` includes).
     if (exclusionValue(token.text, cmd.tokens[i - 1]?.text) !== undefined) continue;
     // Git exclude pathspecs (`:!x`, `:^x`, `:(exclude)x`) name what is not read, like `--exclude`.
@@ -346,14 +343,34 @@ function judge(
   policy: Policy,
   cwd: string,
   home: string | undefined,
+  depth = 0,
 ): { hits: ReturnType<typeof secretTokens> } | { fetch: string } | undefined {
   const resolved = resolveChild(outer);
   if (!resolved) return undefined;
   const { cmd, prog } = resolved;
+  // `bash -c '<line>'` (also `-lc`, under sudo): the line is judged command by command.
+  const code = SHELLS.has(prog.name) ? shellCode(cmd, prog.index) : undefined;
+  if (code !== undefined) {
+    if (depth > 4) return undefined;
+    for (const inner of parseCommand(code)) {
+      const verdict = judge(inner, policy, cwd, home, depth + 1);
+      if (verdict) return verdict;
+    }
+    return undefined;
+  }
   const hits = secretTokens(cmd, policy, cwd, home, prog.name);
   if (hits.length > 0) return consumes(cmd, prog.index, prog.name, hits, policy, cwd) ? undefined : { hits };
   const fetch = isFetch(cmd, prog.index, policy);
   return fetch ? { fetch } : undefined;
+}
+
+const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish"]);
+
+/** The code of `bash -c <code>` / `bash -lc <code>`, or undefined. */
+function shellCode(cmd: SimpleCommand, programIndex: number): string | undefined {
+  const words = cmd.tokens.map((t) => t.text);
+  const at = words.findIndex((w, i) => i > programIndex && /^-[A-Za-z]*c[A-Za-z]*$/.test(w));
+  return at > 0 ? words[at + 1] : undefined;
 }
 
 /** ssh options that take a value (`-o X`, `-p 22`, ...). */
@@ -450,7 +467,7 @@ function bash(call: ToolCall, policy: Policy, home: string | undefined): Decisio
           : run;
       denial.hint = `\`${spec}\` prints a secret value into the transcript. Run \`${form}\` to inject it into a command's environment instead${aws ? "; `aws secretsmanager list-secrets` / `describe-secret` are fine for names" : ""}`;
     } else if (denialHost) {
-      denial.hint = `${denialHost}:${denial.file} is a Secret File on a remote host - reading it puts its values in the transcript. Run \`ssh ${denialHost} npx -y secrets-axi keys ${quote(denial.file!)}\` for variable names and shapes`;
+      denial.hint = `${denialHost}:${denial.file} is a Secret File on a remote host - reading it puts its values in the transcript. Run \`ssh ${denialHost} npx -y secrets-axi keys ${quote(denial.file!)}\` (needs Node there) for variable names and shapes`;
     } else {
       const file = denial.file!;
       denial.hint = `${file} is a Secret File - reading it puts its values in the transcript. Run \`${run}\` to run with it loaded, \`secrets-axi keys ${quote(file)}\` for variable names and shapes, \`secrets-axi set ${quote(file)} KEY=value\` to change one`;

@@ -8,6 +8,8 @@ export interface Token {
   end: number;
   /** Target of a redirection (`< .env`, `>> out`). */
   redirect?: boolean;
+  /** Target of an output redirection (`> f`, `>> f`, `>| f`): written, not read. */
+  output?: boolean;
   /** Body of a heredoc fed to an interpreter (`python3 - <<EOF`): code, scanned for string literals like `-c` code. */
   heredoc?: boolean;
 }
@@ -35,14 +37,16 @@ function split(text: string, base: number, out: SimpleCommand[], depth: number):
   let cur = "";
   let curStart = -1;
   let redirectNext = false;
+  let redirectOut = false;
   // Heredoc delimiters seen on the current line; their bodies start after the next newline and are data, not commands.
   const heredocs: Array<{ delimiter: string; stripTabs: boolean; quoted: boolean }> = [];
   let i = 0;
 
   const flush = (): void => {
     if (curStart < 0) return;
-    tokens.push({ text: cur, start: base + curStart, end: base + i, ...(redirectNext ? { redirect: true } : {}) });
+    tokens.push({ text: cur, start: base + curStart, end: base + i, ...(redirectNext ? { redirect: true, ...(redirectOut ? { output: true } : {}) } : {}) });
     redirectNext = false;
+    redirectOut = false;
     cur = "";
     curStart = -1;
   };
@@ -151,6 +155,7 @@ function split(text: string, base: number, out: SimpleCommand[], depth: number):
         continue;
       }
       redirectNext = kind !== "<<<" && !/^[<>]&/.test(kind);
+      redirectOut = kind.startsWith(">");
       continue;
     }
     if (c === " " || c === "\t" || c === "\r") {
