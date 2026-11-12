@@ -1,6 +1,6 @@
 {
   "name": "secrets-axi",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "description": "Secrets guard CLI for agents - denies .env and credential reads with the right command instead, runs commands with secrets injected and output masked, lists variable names and shapes without values",
   "type": "module",
   "keywords": [
