@@ -381,7 +381,7 @@ function bash(call: ToolCall, policy: Policy, home: string | undefined): Decisio
   }
 
   if (denial && denial.kind === "deny") {
-    const run = `secrets-axi run ${envFileFlags(envReads, policy, cwd)}-- ${runTarget(command, commands, readers)}`;
+    const run = `secrets-axi run ${envFileFlags(envReads, policy)}-- ${runTarget(command, commands, readers)}`;
     if (denial.rule.startsWith("fetchCommands:")) {
       const id = fetchId(readers[0]!);
       const awsForm = denial.rule.includes(":aws ") ? `secrets-axi run --aws-secret ${id ?? "<id>"} -- <command>` : run;
@@ -402,25 +402,36 @@ function bash(call: ToolCall, policy: Policy, home: string | undefined): Decisio
 }
 
 /**
- * What the Hint puts after `run --`: the commands the agent meant, without the reads and shell setup (`cd x`, `set -a`).
- * The Runner spawns without a shell, so a list becomes `sh -c '...'`; a read inside a pipeline, subshell, group or
- * substitution cannot be cut out faithfully, so those get the `<command>` placeholder.
+ * What the Hint puts after `run --`: the agent's line without its reads and `set -a`/`set +a`, operators kept.
+ * The Runner spawns without a shell, so anything but one plain command becomes `sh -c '...'`. A read that does not
+ * stand alone in a `;`/`&&` list (piped, in a subshell, group, loop or substitution) gets the `<command>` placeholder.
  */
 function runTarget(command: string, commands: SimpleCommand[], readers: SimpleCommand[]): string {
   const inside = (a: SimpleCommand, b: SimpleCommand): boolean => a !== b && a.start >= b.start && a.end <= b.end;
   const top = commands.filter((c) => !commands.some((o) => inside(c, o))).sort((a, b) => a.start - b.start);
   if (readers.some((r) => !top.includes(r))) return "<command>";
-  // Only `&&`, `;` and newlines between commands: anything else (`|`, `||`, `(`, `{`, heredoc bodies) is a shell structure.
-  const seps = top.map((c, i) => (i === 0 ? "" : command.slice(top[i - 1]!.end, c.start).trim()));
-  if (seps.some((s) => s !== "" && s !== "&&" && s !== ";")) return "<command>";
   if (top.some((c) => SHELL_KEYWORDS.has(c.tokens[0]?.text ?? ""))) return "<command>";
+  const seps = top.map((c, i) => (i === 0 ? "" : command.slice(top[i - 1]!.end, c.start).trim()));
+  // Subshells, groups and heredoc bodies show up between commands; only plain operators may join them.
+  if (seps.some((s) => !JOINS.has(s))) return "<command>";
+  const cut = top.map((c) => readers.includes(c) || isAllexport(c));
+  const listSep = (s: string | undefined): boolean => s === undefined || s === "" || s === ";" || s === "&&";
+  if (cut.some((x, i) => x && (!listSep(seps[i]) || !listSep(seps[i + 1])))) return "<command>";
   const keep = top
     .map((c, i) => ({ c, sep: seps[i] || ";", text: command.slice(c.start, c.end).trim() }))
-    .filter(({ c, text }) => text !== "" && !readers.includes(c) && !SETUP_ONLY.has(programOf(c)?.name ?? ""));
-  if (!keep.some(({ c }) => programOf(c))) return "<command>";
+    .filter(({ text }, i) => !cut[i] && text !== "");
+  if (!keep.some(({ c }) => programOf(c) && !SETUP_ONLY.has(programOf(c)!.name))) return "<command>";
   const only = keep.length === 1 ? keep[0]! : undefined;
   if (only && programOf(only.c)!.index === 0) return only.text;
   return `sh -c ${quote(keep.map(({ sep, text }, i) => (i === 0 ? text : `${sep === ";" ? ";" : ` ${sep}`} ${text}`)).join(""))}`;
+}
+
+const JOINS = new Set(["", ";", "&&", "||", "|", "|&"]);
+
+/** `set -a` / `set +a` / `set -o allexport`: the wrapper around a `source`, meaningless under the Runner. */
+function isAllexport(cmd: SimpleCommand): boolean {
+  const words = cmd.tokens.filter((t) => !t.redirect).map((t) => t.text);
+  return words[0] === "set" && words.length > 1 && words.slice(1).every((w) => /^[-+]a$/.test(w) || /^[-+]o$/.test(w) || w === "allexport");
 }
 
 const SHELL_KEYWORDS = new Set(["for", "while", "until", "if", "then", "elif", "else", "fi", "do", "done", "case", "esac", "select", "function", "!"]);
@@ -430,13 +441,12 @@ const SETUP_ONLY = new Set(["cd", "pushd", "popd", "set", "export", "unset", "sh
 const ENV_SHAPED = /^\.(env|secrets|envrc)(\..+)?$|\.env$/;
 
 /**
- * `--env-file` flags so the suggested run loads what the command read. They replace the Policy's envFiles,
- * so the defaults that exist here are kept in front. Empty when the defaults already cover every read.
+ * `--env-file` flags so the suggested run loads exactly what the command read (they replace the Policy's envFiles).
+ * Empty when the command read exactly the defaults.
  */
-function envFileFlags(reads: string[], policy: Policy, cwd: string): string {
-  if (reads.every((f) => policy.envFiles.includes(f))) return "";
-  const defaults = policy.envFiles.filter((f) => !reads.includes(f) && existsSync(resolve(cwd, f)));
-  return [...defaults, ...reads].map((f) => `--env-file ${quote(f)} `).join("");
+function envFileFlags(reads: string[], policy: Policy): string {
+  if (reads.length === 0 || (reads.length === policy.envFiles.length && reads.every((f, i) => policy.envFiles[i] === f))) return "";
+  return reads.map((f) => `--env-file ${quote(f)} `).join("");
 }
 
 function fetchId(cmd: SimpleCommand): string | undefined {
