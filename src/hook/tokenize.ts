@@ -76,7 +76,8 @@ function split(text: string, base: number, out: SimpleCommand[], depth: number):
       i++;
       while (i < text.length && text[i] !== '"') {
         if (text[i] === "\\" && i + 1 < text.length) {
-          cur += text[i + 1];
+          // Inside double quotes a backslash escapes only $ ` " \ and newline; `"\.env"` keeps it.
+          cur += '$`"\\\n'.includes(text[i + 1]!) ? text[i + 1] : text.slice(i, i + 2);
           i += 2;
         } else if (two_at(text, i) === "$(") {
           const close = matching(text, i + 1);

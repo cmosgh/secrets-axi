@@ -105,6 +105,13 @@ describe("Bash reads", () => {
     "python3 -c 'print(open(\".env\").read())'",
     "cp .env /tmp/x && cat /tmp/x",
     "find . -name .env -exec cat {} ;",
+    "grep -e KEY .env",
+    "grep -ie KEY .env",
+    "grep -eKEY .env",
+    "grep --regexp=KEY .env",
+    "grep -A3 KEY .env",
+    "grep -f .env other.txt",
+    "rg KEY .env",
     "git diff -- '.env*'",
   ])("denies %s", (command) => {
     expect(bash(command).kind).toBe("deny");
@@ -152,6 +159,9 @@ describe("Bash reads", () => {
     "mv .env.local .env.local.bak",
     "ln -s ../../.env apps/web/.env",
     "cp .env.local apps/",
+    'grep -n -E "\\.env" ~/.claude/settings.json | grep -iE "deny|Read"',
+    "grep .env notes.md",
+    "grep -i .env notes.md",
     "git grep -n foo -- 'tools/**' 'scripts/**'",
     "git ls-files '*'",
     'find apps -name "route-authz*" -not -path "*/node_modules/*"',
