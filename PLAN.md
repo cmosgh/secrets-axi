@@ -34,7 +34,7 @@ Rules:
 | Command | Does |
 |---|---|
 | `secrets-axi` | home view: Guard status, Secret Files in the repo (name, key count), detected Secret Source, other env files not loaded, `.env` tracked by git warning, the one `run` form to use |
-| `run [--env-file F]... [--aws-secret ID[=NAME]]... -- <cmd>` | Guarded Run |
+| `run [--env-file F]... [--aws-secret ID[=NAME]]... [--keychain S/A=NAME]... -- <cmd>` | Guarded Run |
 | `keys <file>` | Key listing (name, set/empty, shape; values for Reveal Keys) |
 | `set <file> KEY=value`, `unset <file> KEY` | edit in place; prints the key name and `set`/`replaced`/`removed`, never other lines |
 | `check '<command>'` / `check --read <path>` | dry run of the Guard |

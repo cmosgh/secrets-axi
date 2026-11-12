@@ -162,6 +162,8 @@ function secretTokens(cmd: SimpleCommand, policy: Policy, cwd: string, home: str
     if (exclusionValue(token.text, cmd.tokens[i - 1]?.text) !== undefined) continue;
     // Git exclude pathspecs (`:!x`, `:^x`, `:(exclude)x`) name what is not read, like `--exclude`.
     if (program === "git" && /^:(!|\^|\([^)]*\bexclude\b[^)]*\))/.test(token.text)) continue;
+    // Git expands a pathspec like `'scripts/**'` itself, over tracked files; an all-wildcard name targets no Secret File.
+    if (program === "git" && /^[^:]*\/[*?]+$|^[*?]+$/.test(token.text)) continue;
     // `find -path X` matches names; without an action that runs something, find only lists paths.
     if (program === "find" && FIND_TESTS.has(cmd.tokens[i - 1]?.text ?? "") && !cmd.tokens.some((t) => FIND_ACTIONS.has(t.text))) continue;
     const candidates = [token.text];
@@ -383,9 +385,15 @@ function bash(call: ToolCall, policy: Policy, home: string | undefined): Decisio
   if (denial && denial.kind === "deny") {
     const run = `secrets-axi run ${envFileFlags(envReads, policy)}-- ${runTarget(command, commands, readers)}`;
     if (denial.rule.startsWith("fetchCommands:")) {
-      const id = fetchId(readers[0]!);
-      const awsForm = denial.rule.includes(":aws ") ? `secrets-axi run --aws-secret ${id ?? "<id>"} -- <command>` : run;
-      denial.hint = `\`${denial.rule.slice("fetchCommands:".length)}\` prints a secret value into the transcript. Run \`${awsForm}\` to inject it into a command's environment instead; \`aws secretsmanager list-secrets\` / \`describe-secret\` are fine for names`;
+      const spec = denial.rule.slice("fetchCommands:".length);
+      const aws = spec.startsWith("aws ");
+      const keychain = spec === "security find-generic-password" ? keychainSpec(readers[0]!, command) : undefined;
+      const form = aws
+        ? `secrets-axi run --aws-secret ${fetchId(readers[0]!) ?? "<id>"} -- <command>`
+        : keychain
+          ? `secrets-axi run --keychain ${keychain} -- <command>`
+          : run;
+      denial.hint = `\`${spec}\` prints a secret value into the transcript. Run \`${form}\` to inject it into a command's environment instead${aws ? "; `aws secretsmanager list-secrets` / `describe-secret` are fine for names" : ""}`;
     } else {
       const file = denial.file!;
       denial.hint = `${file} is a Secret File - reading it puts its values in the transcript. Run \`${run}\` to run with it loaded, \`secrets-axi keys ${quote(file)}\` for variable names and shapes, \`secrets-axi set ${quote(file)} KEY=value\` to change one`;
@@ -458,6 +466,20 @@ function fetchId(cmd: SimpleCommand): string | undefined {
     if (at >= 0 && words[at + 1]) return words[at + 1];
   }
   return undefined;
+}
+
+/** `<service>/<account>=NAME` for a `security find-generic-password -s S -a A`; NAME from `NAME="$(security ...)"`. */
+function keychainSpec(cmd: SimpleCommand, command: string): string | undefined {
+  const words = cmd.tokens.map((t) => t.text);
+  const value = (flag: string): string | undefined => {
+    const at = words.indexOf(flag);
+    return at >= 0 ? words[at + 1] : undefined;
+  };
+  const service = value("-s");
+  const account = value("-a");
+  if (!service || !account) return undefined;
+  const name = command.slice(0, cmd.start).match(/([A-Za-z_][A-Za-z0-9_]*)=["']?\$\(\s*$/)?.[1] ?? "<NAME>";
+  return `${quote(`${service}/${account}`)}=${name}`;
 }
 
 /** For the home view and tests: the basename a Hint would show. */

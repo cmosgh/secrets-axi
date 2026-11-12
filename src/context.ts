@@ -8,4 +8,6 @@ export interface CommandContext {
   userPolicyPath?: string;
   /** Streams a Guarded Run writes the child's masked output to (default process.stdout/stderr). */
   io?: { stdout: Writable; stderr: Writable };
+  /** Test seam for `run --keychain`: returns the password for a service/account. */
+  keychain?: (spec: { service: string; account: string }) => string;
 }
