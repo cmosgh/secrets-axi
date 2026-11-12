@@ -161,6 +161,8 @@ function secretTokens(cmd: SimpleCommand, policy: Policy, cwd: string, home: str
     if (patterns.has(token)) continue;
     // Interpreter code (a heredoc body, `python -c <code>`) is judged by its string literals below, never as one path.
     if (token.heredoc || (program && INLINE_CODE[program]?.includes(cmd.tokens[i - 1]?.text ?? ""))) continue;
+    // `for d in a/*/*`: a glob in the list is iterated, not read (the body is judged on its own); named files still count.
+    if ((program === "for" || program === "select") && /[*?[]/.test(token.text)) continue;
     // The value of an exclusion names what is NOT read: `--exclude=X`, `--ignore X`, `-g '!X'` (a plain `-g X` includes).
     if (exclusionValue(token.text, cmd.tokens[i - 1]?.text) !== undefined) continue;
     // Git exclude pathspecs (`:!x`, `:^x`, `:(exclude)x`) name what is not read, like `--exclude`.
