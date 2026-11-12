@@ -88,7 +88,7 @@ export const BUILTIN: Policy = {
     "kubectl get secret",
     "docker config inspect",
   ],
-  consumers: ["secrets-axi", "docker --env-file", "docker compose --env-file", "podman --env-file", "dotenv -e", "dotenv --file", "dotenvx", "op run --env-file", "direnv allow", "chmod", "ls", "stat", "file", "wc", "rm", "git add", "git rm", "git checkout --", "git restore", "test", "[", "touch", "echo", "printf", "shred", "basename", "dirname", "realpath", "readlink"],
+  consumers: ["secrets-axi", "docker --env-file", "docker compose --env-file", "podman --env-file", "dotenv -e", "dotenv --file", "dotenvx", "op run --env-file", "direnv allow", "chmod", "ls", "stat", "file", "wc", "rm", "cp", "mv", "install", "ln", "git add", "git rm", "git checkout --", "git restore", "test", "[", "touch", "echo", "printf", "shred", "basename", "dirname", "realpath", "readlink"],
   reveal: ["NODE_ENV", "ENV", "ENVIRONMENT", "APP_ENV", "PORT", "HOST", "HOSTNAME", "LOG_LEVEL", "LOG_FORMAT", "DEBUG", "TZ", "LANG", "LC_ALL", "CI", "RAILS_ENV", "FLASK_ENV", "DJANGO_SETTINGS_MODULE", "AWS_REGION", "AWS_DEFAULT_REGION", "PUBLIC_URL", "BASE_URL", "APP_NAME", "APP_URL", "API_URL", "API_BASE_URL", "VITE_*", "NEXT_PUBLIC_*", "REACT_APP_*", "PUBLIC_*", "EXPO_PUBLIC_*", "NUXT_PUBLIC_*"],
   envFiles: [".env"],
   aws: [],

@@ -43,7 +43,7 @@ It always **denies**, never `ask` ("approve once" is how values end up in transc
 | `Read` / `Edit` / `Write` of a Secret File | deny; Hint: `secrets-axi keys <file>` or `secrets-axi set <file> KEY=value` |
 | `Grep` with `path` a Secret File | deny; Hint: `secrets-axi keys <file>` |
 | `Grep` over a directory, `grep -r` / `rg` / `ag` without an explicit Secret File | rewrite: exclusions for the Secret File patterns |
-| `Bash` with a token that resolves to a Secret File | deny unless the program is an Allowed Consumer (`docker --env-file`, `dotenv -e`, `dotenvx run`, `secrets-axi`); Hint: `secrets-axi run -- <command>` |
+| `Bash` with a token that resolves to a Secret File | deny unless the program is an Allowed Consumer (`docker --env-file`, `dotenv -e`, `dotenvx run`, `secrets-axi`, and `cp`/`mv`/`install`/`ln` to a destination that is still a Secret File or a directory); Hint: `secrets-axi run -- <command>` |
 | `Bash` matching a Secret Fetch (`aws secretsmanager get-secret-value`, `op read`, `vault kv get`, ...) | deny; Hint: `secrets-axi run --aws-secret <id> -- <command>` or the source's run form |
 | `Bash` `git show <rev>:<secret file>` | deny; other git commands pass |
 

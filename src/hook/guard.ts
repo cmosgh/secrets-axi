@@ -1,5 +1,5 @@
 // Guard decisions: deterministic, from the Policy and the literal call. Node builtins only.
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, isAbsolute, relative, resolve } from "node:path";
 import { basenamePatterns, expandHome, globToRegExp, sampleNames, secretFilePattern, type Policy } from "../policy.js";
 import { parseCommand, programOf, type SimpleCommand, type Token } from "./tokenize.js";
@@ -283,11 +283,27 @@ function isFetch(cmd: SimpleCommand, programIndex: number, policy: Policy): stri
   return undefined;
 }
 
-function consumes(cmd: SimpleCommand, programIndex: number, program: string, hits: ReturnType<typeof secretTokens>, policy: Policy): boolean {
+const COPIERS = new Set(["cp", "mv", "install", "ln"]);
+
+/** A copy is not a read while its destination is still guarded: a Secret File, or a directory the file keeps its name in. */
+function copyStaysSecret(cmd: SimpleCommand, programIndex: number, hits: ReturnType<typeof secretTokens>, cwd: string): boolean {
+  const dest = cmd.tokens.slice(programIndex + 1).filter((t) => !t.redirect && !t.text.startsWith("-")).at(-1);
+  if (!dest) return false;
+  if (hits.some((h) => h.token === dest)) return true;
+  if (dest.text.endsWith("/")) return true;
+  try {
+    return statSync(resolve(cwd, dest.text)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function consumes(cmd: SimpleCommand, programIndex: number, program: string, hits: ReturnType<typeof secretTokens>, policy: Policy, cwd: string): boolean {
   const words = cmd.tokens.map((t) => t.text);
   for (const spec of policy.consumers.map(parseConsumer)) {
     if (spec.program[0] !== program) continue;
     if (!spec.program.slice(1).every((p, i) => words[programIndex + 1 + i] === p)) continue;
+    if (COPIERS.has(program) && !copyStaysSecret(cmd, programIndex, hits, cwd)) continue;
     if (!spec.flag) return true;
     const flag = spec.flag;
     // Every Secret File token must be that flag's value (`--env-file X` or `--env-file=X`).
@@ -327,7 +343,7 @@ function bash(call: ToolCall, policy: Policy, home: string | undefined): Decisio
     if (prog.name === "secrets-axi") continue;
     const hits = secretTokens(cmd, policy, cwd, home, prog.name);
     if (hits.length > 0) {
-      if (consumes(cmd, prog.index, prog.name, hits, policy)) continue;
+      if (consumes(cmd, prog.index, prog.name, hits, policy, cwd)) continue;
       readers.push(outer);
       for (const hit of hits) {
         const shown = display(hit.path, cwd, home);
