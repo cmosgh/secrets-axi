@@ -143,7 +143,8 @@ function inlineLiterals(cmd: SimpleCommand, program: string): string[] {
     const viaHeredoc = cmd.tokens[i]!.heredoc === true;
     if (!viaHeredoc && !flags.includes(words[i]!)) continue;
     const code = viaHeredoc ? words[i]! : (words[i + 1] ?? "");
-    for (const m of code.matchAll(/(["'`])([^"'`\n]{1,200})\1/g)) out.push(m[2]!);
+    // A literal with an escape sequence (`"a\nb"`) is text, never a path.
+    for (const m of code.matchAll(/(["'`])([^"'`\n]{1,200})\1/g)) if (!/\\[ntr]/.test(m[2]!)) out.push(m[2]!);
     if (program.endsWith("sh")) for (const inner of parseCommand(code)) out.push(...inner.tokens.map((t) => t.text));
   }
   return out;
@@ -158,6 +159,8 @@ function secretTokens(cmd: SimpleCommand, policy: Policy, cwd: string, home: str
     if (token.output) continue;
     // A search pattern (`grep -E "\.env" f`) matches text; the files come after it.
     if (patterns.has(token)) continue;
+    // Interpreter code (a heredoc body, `python -c <code>`) is judged by its string literals below, never as one path.
+    if (token.heredoc || (program && INLINE_CODE[program]?.includes(cmd.tokens[i - 1]?.text ?? ""))) continue;
     // The value of an exclusion names what is NOT read: `--exclude=X`, `--ignore X`, `-g '!X'` (a plain `-g X` includes).
     if (exclusionValue(token.text, cmd.tokens[i - 1]?.text) !== undefined) continue;
     // Git exclude pathspecs (`:!x`, `:^x`, `:(exclude)x`) name what is not read, like `--exclude`.

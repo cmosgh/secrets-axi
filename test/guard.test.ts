@@ -39,6 +39,10 @@ describe("tokenizer", () => {
     expect(bash("node <<'EOF'\nrequire('fs').readFileSync('.env')\nEOF").kind).toBe("deny");
     expect(bash("python3 - <<EOF\nprint('.env is loaded by secrets-axi')\nEOF").kind).toBe("pass");
     expect(bash("cat > README.md <<EOF\nRun secrets-axi run -- x instead of source .env\nEOF").kind).toBe("pass");
+    // Interpreter code is judged by its string literals; text with escapes is not a path.
+    expect(bash("python3 - \"$M\" <<'EOF'\nold=\"cp .env  w/.env\\ncp .env.e2e  w/.env.e2e\\n\"\nprint(old)\nEOF").kind).toBe("pass");
+    expect(bash("python3 - <<'EOF'\nprint(open('.env').read())\nEOF").kind).toBe("deny");
+    expect(bash("python3 -c 'print(open(\".env\").read())'").kind).toBe("deny");
     // Escaped backticks and `\$(` are literal text in an unquoted heredoc.
     expect(bash("cat > x.md <<EOF\nNew \\`.env.example\\` keys, also \\`.env\\`\nEOF").kind).toBe("pass");
     expect(bash("cat > x.md <<EOF\nRun \\$(cat .env) later\nEOF").kind).toBe("pass");
