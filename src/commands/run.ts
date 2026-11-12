@@ -8,24 +8,27 @@ import { isJsonMode } from "../render.js";
 import { fetchAwsSecrets, parseAwsSpec } from "../sources/aws.js";
 import { detectSource, SUPPORTED } from "../sources/detect.js";
 import { loadEnvFiles } from "../sources/dotenv.js";
+import { fetchKeychain, parseKeychainSpec } from "../sources/keychain.js";
 import { findEnvFiles } from "./scan.js";
 
-export const RUN_HELP = `usage: secrets-axi run [--env-file <file>]... [--aws-secret <id>[=NAME]]... [--source dotenv|none] [--profile <p>] [--region <r>] [--quiet] -- <command> [args]
+export const RUN_HELP = `usage: secrets-axi run [--env-file <file>]... [--aws-secret <id>[=NAME]]... [--keychain <service>/<account>=NAME]... [--source dotenv|none] [--profile <p>] [--region <r>] [--quiet] -- <command> [args]
 Guarded Run: resolve secrets, start the command with them in its environment, mask every value in its output as <NAME>. Exit code = the command's.
-flags[6]:
-  --env-file <file> (repeatable, in order; default: the Policy's envFiles, normally .env), --aws-secret <id> (Secrets Manager id, JSON keys become variables; <id>=NAME for a string secret; ssm:/path for Parameter Store), --source dotenv|none (skip detection), --profile/--region (aws), --quiet (no stderr summary line)
+flags[7]:
+  --env-file <file> (repeatable, in order; default: the Policy's envFiles, normally .env), --aws-secret <id> (Secrets Manager id, JSON keys become variables; <id>=NAME for a string secret; ssm:/path for Parameter Store), --keychain <service>/<account>=NAME (repeatable; a macOS keychain generic password), --source dotenv|none (skip detection), --profile/--region (aws), --quiet (no stderr summary line)
 notes:
   Masking cannot be switched off. Values shorter than 4 characters are not masked.
   The command runs through no shell: pass it as separate arguments after --
-examples[3]:
+examples[4]:
   secrets-axi run -- pnpm test
   secrets-axi run --env-file .env.test -- pnpm vitest run
   secrets-axi run --aws-secret prod/db --aws-secret ssm:/app/token=APP_TOKEN -- node scripts/migrate.js
+  secrets-axi run --keychain mysql-axi/develop=DB_PASSWORD -- npm run cli
 `;
 
 const SPECS = [
   { name: "--env-file", repeatable: true },
   { name: "--aws-secret", repeatable: true },
+  { name: "--keychain", repeatable: true },
   { name: "--source" },
   { name: "--profile" },
   { name: "--region" },
@@ -47,9 +50,11 @@ export async function runCommand(args: string[], ctx: CommandContext): Promise<s
   const detected = detectSource(ctx.cwd, policy, findEnvFiles(ctx.cwd, policy));
   if (source === undefined && envFiles.length === 0 && !SUPPORTED.has(detected.kind)) {
     throw axiError(`secret source ${detected.kind} detected (${detected.reason}) - ${detected.unsupported}`, "SOURCE_ERROR", [
-      "Run with `--source dotenv` to load the env file as plain text anyway, or `--source none` to inject only --aws-secret values",
+      "Run with `--source dotenv` to load the env file as plain text anyway, or `--source none` to inject only --aws-secret/--keychain values",
     ]);
   }
+  // Validated before anything is read.
+  const keychainSpecs = flags(parsed, "--keychain").map(parseKeychainSpec);
   const env = new Map<string, string>();
   const from: string[] = [];
   if (source !== "none") {
@@ -64,6 +69,11 @@ export async function runCommand(args: string[], ctx: CommandContext): Promise<s
     const aws = fetchAwsSecrets(awsSpecs, { profile: flag(parsed, "--profile"), region: flag(parsed, "--region") });
     for (const [k, v] of aws.env) env.set(k, v);
     from.push(`aws ${aws.from.join(", ")}`);
+  }
+  if (keychainSpecs.length > 0) {
+    const keychain = fetchKeychain(keychainSpecs, ctx.keychain ? { fetch: ctx.keychain } : {});
+    for (const [k, v] of keychain.env) env.set(k, v);
+    from.push(`keychain ${keychain.from.join(", ")}`);
   }
 
   const io = ctx.io ?? { stdout: process.stdout, stderr: process.stderr };

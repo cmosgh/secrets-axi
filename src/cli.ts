@@ -46,6 +46,7 @@ export interface MainOptions {
   home?: string;
   userPolicyPath?: string;
   io?: CommandContext["io"];
+  keychain?: CommandContext["keychain"];
 }
 
 export async function main(options: MainOptions = {}): Promise<void> {
@@ -60,6 +61,7 @@ export async function main(options: MainOptions = {}): Promise<void> {
     ...(options.home !== undefined ? { home: options.home } : {}),
     ...(options.userPolicyPath !== undefined ? { userPolicyPath: options.userPolicyPath } : {}),
     ...(options.io !== undefined ? { io: options.io } : {}),
+    ...(options.keychain !== undefined ? { keychain: options.keychain } : {}),
   };
   // `run` bypasses the SDK dispatcher: its child's flags (`--help`, `--json`) are not ours, and its output is the child's.
   if (argv[0] === "run" && !json) {

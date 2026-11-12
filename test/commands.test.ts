@@ -47,7 +47,11 @@ function runner(dir: string, home: string) {
     err.on("data", (c: Buffer) => (stderr += c.toString()));
     const before = process.exitCode;
     process.exitCode = 0;
-    await main({ argv, cwd: dir, home, userPolicyPath: join(home, ".config", "secrets-axi", "policy.json"), stdout: { write: (c: string) => (stdout += c) }, io: { stdout: out, stderr: err } });
+    const keychain = ({ service, account }: { service: string; account: string }): string => {
+      if (service === "fake-svc" && account === "dev") return "FAKE_KEYCHAIN_PASSWORD_1";
+      throw new Error(`no item ${service}/${account}`);
+    };
+    await main({ argv, cwd: dir, home, userPolicyPath: join(home, ".config", "secrets-axi", "policy.json"), stdout: { write: (c: string) => (stdout += c) }, io: { stdout: out, stderr: err }, keychain });
     const exitCode = Number(process.exitCode ?? 0);
     process.exitCode = before;
     return { stdout, stderr, exitCode };
@@ -146,6 +150,12 @@ describe("secrets-axi commands", () => {
     const missing = await sx("run", "--", "definitely-not-a-command-xyz");
     expect(missing.exitCode).toBe(1);
     expect(missing.stdout).toContain("command not found");
+    const kc = await sx("run", "--source", "none", "--keychain", "fake-svc/dev=DB_PASSWORD", "--", "node", "-e", "console.log(process.env.DB_PASSWORD)");
+    expect(kc.stdout).toBe("<DB_PASSWORD>\n");
+    expect(kc.stderr).toContain("keychain fake-svc/dev");
+    const badSpec = await sx("run", "--keychain", "fake-svc/dev", "--", "node", "-e", "1");
+    expect(badSpec.exitCode).toBe(2);
+    expect(badSpec.stdout).toContain("<service>/<account>=NAME");
     const noSep = await sx("run", "pnpm", "test");
     expect(noSep.exitCode).toBe(2);
     const childFlags = await sx("run", "--quiet", "--", "node", "-e", "console.log(process.argv.slice(1).join(' '))", "--", "--json", "--help");

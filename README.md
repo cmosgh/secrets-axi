@@ -44,7 +44,7 @@ It always **denies**, never `ask` ("approve once" is how values end up in transc
 | `Grep` with `path` a Secret File | deny; Hint: `secrets-axi keys <file>` |
 | `Grep` over a directory, `grep -r` / `rg` / `ag` without an explicit Secret File | rewrite: exclusions for the Secret File patterns |
 | `Bash` with a token that resolves to a Secret File | deny unless the program is an Allowed Consumer (`docker --env-file`, `dotenv -e`, `dotenvx run`, `secrets-axi`, and `cp`/`mv`/`install`/`ln` to a destination that is still a Secret File or a directory); Hint: `secrets-axi run -- <command>` |
-| `Bash` matching a Secret Fetch (`aws secretsmanager get-secret-value`, `op read`, `vault kv get`, ...) | deny; Hint: `secrets-axi run --aws-secret <id> -- <command>` or the source's run form |
+| `Bash` matching a Secret Fetch (`aws secretsmanager get-secret-value`, `op read`, `vault kv get`, ...) | deny; Hint: `secrets-axi run --aws-secret <id> -- <command>`, `--keychain <service>/<account>=NAME` for `security find-generic-password`, or the source's run form |
 | `Bash` `git show <rev>:<secret file>` | deny; other git commands pass |
 
 What the agent is told instead, for `Read` of `.env` (the hook's `permissionDecisionReason`):
@@ -62,7 +62,7 @@ Masking is the boundary, the hook is the nudge: every injected value is replaced
 | Command | What it does |
 | --- | --- |
 | `secrets-axi` | Home view: Guard status, Secret Files in the repository (name, key count), detected Secret Source, other env files not loaded, a warning when `.env` is tracked by git, the one `run` form to use |
-| `run [--env-file F]... [--aws-secret ID[=NAME]]... -- <cmd>` | Guarded Run: resolve the secrets, spawn `<cmd>` with them in its environment, mask its output |
+| `run [--env-file F]... [--aws-secret ID[=NAME]]... [--keychain S/A=NAME]... -- <cmd>` | Guarded Run: resolve the secrets, spawn `<cmd>` with them in its environment, mask its output |
 | `keys <file>` | Key listing: each variable's name, set or empty, and the shape of its value (length, character class). Values only for Reveal Keys (`NODE_ENV`, `PORT`, `VITE_*`, ...) |
 | `set <file> KEY=value`, `unset <file> KEY` | Edit in place; prints the key name and `set` / `replaced` / `removed`, never any other line |
 | `check '<command>'`, `check --read <path>` | Dry run of the Guard: the decision and the Policy entry behind it |
@@ -75,6 +75,7 @@ Masking is the boundary, the hook is the nudge: every injected value is replaced
 secrets-axi run -- pnpm test
 secrets-axi run --env-file .env.test -- pnpm vitest
 secrets-axi run --aws-secret prod/db -- node scripts/migrate.js
+secrets-axi run --keychain mysql-axi/develop=DB_PASSWORD -- npm run cli
 secrets-axi keys .env
 secrets-axi set .env FEATURE_X=true
 secrets-axi check 'cat .env | grep DB'
@@ -89,6 +90,7 @@ The first match wins; `--source` overrides. A source only resolves values: the R
 3. `.env.keys` present: `dotenvx get --all` (detected, not supported yet)
 4. plain `.env`: built-in parser
 5. AWS Secrets Manager / SSM entries from the Policy or `--aws-secret`: AWS SDK, merged over the env file (a JSON object becomes one variable per top-level key; a bare string needs `ID=NAME`)
+6. macOS keychain generic passwords from `--keychain <service>/<account>=NAME`, through the `security` CLI (macOS asks the user the first time for items another app created)
 
 Only `.env` is loaded by default; `--env-file` is repeatable and ordered, and the Policy `envFiles` key sets the default. The `NODE_ENV` cascade (`.env.local`, `.env.production`, ...) is never applied.
 
@@ -117,7 +119,7 @@ Three layers, merged in order: built-in, then `~/.config/secrets-axi/policy.json
 ## Known limits
 
 - The Guard sees the literal command: `python -c "open('.env')"` or `$(printf '.e''nv')` pass it. The hard layer (the `Read(...)` deny rules `setup hooks` writes) and the sandbox are the boundary for those; masking covers whatever a Guarded Run prints.
-- A Secret File tracked by git leaks through `git diff` / `git log -p`; secrets-axi warns in the home view, it cannot cover it.
+- A Secret File tracked by git leaks through `git diff` / `git log -p`, and through `git grep` over an all-wildcard pathspec (`'scripts/**'`, which git expands itself); secrets-axi warns in the home view, it cannot cover it.
 - A child of a Guarded Run can read the Secret File itself; Masking still covers what it prints. A value the Runner did not inject (a different Secret File the child reads on its own) is not masked, so load it through `run` too.
 - Masking is by substring: values under four characters are not masked, and a short or common value that is not a Reveal Key can hit unrelated output (`secrets-axi policy add reveal LOG_FORMAT` fixes one such key). Encoded forms (base64, URL-encoded) are not masked yet.
 - Membership of a Secret File is by name; a secret in an unnamed file is not seen (content sniffing is deferred).

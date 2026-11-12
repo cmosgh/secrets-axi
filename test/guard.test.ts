@@ -100,6 +100,7 @@ describe("Bash reads", () => {
     "python3 -c 'print(open(\".env\").read())'",
     "cp .env /tmp/x && cat /tmp/x",
     "find . -name .env -exec cat {} ;",
+    "git diff -- '.env*'",
   ])("denies %s", (command) => {
     expect(bash(command).kind).toBe("deny");
   });
@@ -146,6 +147,8 @@ describe("Bash reads", () => {
     "mv .env.local .env.local.bak",
     "ln -s ../../.env apps/web/.env",
     "cp .env.local apps/",
+    "git grep -n foo -- 'tools/**' 'scripts/**'",
+    "git ls-files '*'",
     'find apps -name "route-authz*" -not -path "*/node_modules/*"',
     "find . -name .env",
     "test -f .env && echo present",
@@ -249,6 +252,11 @@ describe("Bash Secret Fetch", () => {
     expect(d.kind).toBe("deny");
     expect((d as { rule: string }).rule).toMatch(/^fetchCommands:/);
     if (id) expect((d as { hint: string }).hint).toContain(`--aws-secret ${id}`);
+  });
+  it("a keychain read points at run --keychain with the service, account and variable", () => {
+    const d = bash('DB_PW="$(security find-generic-password -s mysql-axi -a develop -w)" npm run cli') as { hint: string };
+    expect(d.hint).toContain("`secrets-axi run --keychain mysql-axi/develop=DB_PW -- <command>`");
+    expect((bash("security find-generic-password -s svc -a me -w") as { hint: string }).hint).toContain("--keychain svc/me=<NAME>");
   });
   it.each(["aws secretsmanager list-secrets", "aws secretsmanager describe-secret --secret-id prod/db", "aws ssm get-parameter --name /app/region", "aws sts get-caller-identity", "doppler setup"])(
     "passes %s",
