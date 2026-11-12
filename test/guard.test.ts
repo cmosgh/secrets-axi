@@ -39,6 +39,11 @@ describe("tokenizer", () => {
     expect(bash("node <<'EOF'\nrequire('fs').readFileSync('.env')\nEOF").kind).toBe("deny");
     expect(bash("python3 - <<EOF\nprint('.env is loaded by secrets-axi')\nEOF").kind).toBe("pass");
     expect(bash("cat > README.md <<EOF\nRun secrets-axi run -- x instead of source .env\nEOF").kind).toBe("pass");
+    // Escaped backticks and `\$(` are literal text in an unquoted heredoc.
+    expect(bash("cat > x.md <<EOF\nNew \\`.env.example\\` keys, also \\`.env\\`\nEOF").kind).toBe("pass");
+    expect(bash("cat > x.md <<EOF\nRun \\$(cat .env) later\nEOF").kind).toBe("pass");
+    expect(bash("cat > x.md <<EOF\nValue: `cat .env`\nEOF").kind).toBe("deny");
+    expect(bash("cat > x.md <<EOF\nValue: $(cat .env)\nEOF").kind).toBe("deny");
   });
 
   it("skips wrappers and their options to find the program", () => {
