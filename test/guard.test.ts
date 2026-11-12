@@ -112,14 +112,17 @@ describe("Bash reads", () => {
     const d3 = bash("cd ~/work/app && grep -c . .env") as { hint: string };
     expect(d3.hint).toContain("`secrets-axi run -- <command>`");
     const d4 = bash("cd app && export FOO=1 && cat .env && pnpm start") as { hint: string };
-    expect(d4.hint).toContain("`secrets-axi run -- pnpm start`");
+    expect(d4.hint).toContain("`secrets-axi run -- sh -c 'cd app && export FOO=1 && pnpm start'`");
   });
 
   it("the Hint runs a command list through sh -c and never mangles shell structure", () => {
     const list = bash("B=x; cat .env && make build && make test") as { hint: string };
     expect(list.hint).toContain("`secrets-axi run -- sh -c 'B=x && make build && make test'`");
+    // Reported shape: a standalone source in a line with pipes keeps every operator.
+    const piped = bash("ls m/ | grep -i spare; set -a; source .secrets.bb >/dev/null 2>&1; set +a; bb-axi pr view 1 2>&1 | head -30; git fetch -q origin stage && git log -3") as { hint: string };
+    expect(piped.hint).toContain("`secrets-axi run --env-file .secrets.bb -- sh -c 'ls m/ | grep -i spare; bb-axi pr view 1 2>&1 | head -30; git fetch -q origin stage && git log -3'`");
     for (const command of [
-      "cat .env; git log | head -1",
+      "cat .env | grep KEY; make",
       "cat .env; (cd w && npx husky; git log -1)",
       "echo $(cat .env) && make",
       "for f in a b; do cat .env; done",
@@ -181,12 +184,12 @@ describe("Bash reads", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("the suggested run loads the Secret Files the command read, keeping the default envFiles that exist", () => {
+  it("the suggested run loads exactly the Secret Files the command read", () => {
     const dir = mkdtempSync(join(tmpdir(), "sx-hint-"));
     const at = (command: string): string => (decide(call("Bash", { command }, dir), BUILTIN, { home: HOME }) as { hint: string }).hint;
     expect(at("set -a; source .secrets.atlassian; set +a; python3 loop-watch.py triage")).toContain("`secrets-axi run --env-file .secrets.atlassian -- python3 loop-watch.py triage`");
     writeFileSync(join(dir, ".env"), "A=1\n");
-    expect(at("set -a; source .secrets.atlassian; set +a; python3 loop-watch.py triage")).toContain("`secrets-axi run --env-file .env --env-file .secrets.atlassian -- python3 loop-watch.py triage`");
+    expect(at("set -a; source .secrets.atlassian; set +a; python3 loop-watch.py triage")).toContain("`secrets-axi run --env-file .secrets.atlassian -- python3 loop-watch.py triage`");
     expect(at("source .env && source .env.local && pnpm dev")).toContain("`secrets-axi run --env-file .env --env-file .env.local -- pnpm dev`");
     expect(at("source .env && pnpm dev")).toContain("`secrets-axi run -- pnpm dev`");
     expect(at("cat certs/server.pem && node x.js")).toContain("`secrets-axi run -- node x.js`");
