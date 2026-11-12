@@ -239,6 +239,22 @@ describe("Bash reads", () => {
   });
 });
 
+describe("Bash over ssh", () => {
+  it("judges each command of the remote line and names the remote file", () => {
+    const d = bash(`ssh -o ConnectTimeout=10 host1 'sudo -n -u u crontab -l 2>/dev/null | grep -c x; grep -oE "^(MODE|TOKENS?)" /apps/x/.env'`) as { kind: string; file: string; hint: string };
+    expect(d.kind).toBe("deny");
+    expect(d.file).toBe("/apps/x/.env");
+    expect(d.hint).toContain("host1:/apps/x/.env is a Secret File on a remote host");
+    expect(d.hint).toContain("`ssh host1 npx -y secrets-axi keys /apps/x/.env`");
+    expect(d.hint).not.toContain("--env-file");
+    expect(bash("ssh -p 22 host1 cat .env").kind).toBe("deny");
+    expect(bash("ssh host1 aws secretsmanager get-secret-value --secret-id p/db").kind).toBe("deny");
+  });
+  it.each(["ssh host1 npx -y secrets-axi keys /apps/x/.env", "ssh host1 'rm /apps/x/.env.bak'", "ssh host1 uptime", "ssh host1", "npx -y secrets-axi keys .env"])("passes %s", (command) => {
+    expect(bash(command).kind).toBe("pass");
+  });
+});
+
 describe("Bash Secret Fetch", () => {
   it.each([
     ["aws secretsmanager get-secret-value --secret-id prod/db", "prod/db"],
