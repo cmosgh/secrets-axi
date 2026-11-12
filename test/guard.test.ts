@@ -158,6 +158,18 @@ describe("Bash reads", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("the suggested run loads the Secret Files the command read, keeping the default envFiles that exist", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sx-hint-"));
+    const at = (command: string): string => (decide(call("Bash", { command }, dir), BUILTIN, { home: HOME }) as { hint: string }).hint;
+    expect(at("set -a; source .secrets.atlassian; set +a; python3 loop-watch.py triage")).toContain("`secrets-axi run --env-file .secrets.atlassian -- python3 loop-watch.py triage`");
+    writeFileSync(join(dir, ".env"), "A=1\n");
+    expect(at("set -a; source .secrets.atlassian; set +a; python3 loop-watch.py triage")).toContain("`secrets-axi run --env-file .env --env-file .secrets.atlassian -- python3 loop-watch.py triage`");
+    expect(at("source .env && source .env.local && pnpm dev")).toContain("`secrets-axi run --env-file .env --env-file .env.local -- pnpm dev`");
+    expect(at("source .env && pnpm dev")).toContain("`secrets-axi run -- pnpm dev`");
+    expect(at("cat certs/server.pem && node x.js")).toContain("`secrets-axi run -- node x.js`");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("git exclude pathspecs are not reads; a command after a shell keyword is judged by its own program", () => {
     expect(bash(`git grep -n "foo" -- '*.js' ':!**/spec/**' | grep -v bar | head -12`).kind).toBe("pass");
     expect(bash("git grep foo -- . ':(exclude).env' ':^.env.local'").kind).toBe("pass");

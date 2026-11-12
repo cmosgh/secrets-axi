@@ -1,5 +1,5 @@
 // Guard decisions: deterministic, from the Policy and the literal call. Node builtins only.
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { basename, isAbsolute, relative, resolve } from "node:path";
 import { basenamePatterns, expandHome, globToRegExp, sampleNames, secretFilePattern, type Policy } from "../policy.js";
 import { parseCommand, programOf, type SimpleCommand, type Token } from "./tokenize.js";
@@ -306,6 +306,8 @@ function bash(call: ToolCall, policy: Policy, home: string | undefined): Decisio
   const commands = parseCommand(command);
   const cwd = call.cwd;
   const readers: SimpleCommand[] = [];
+  // Dotenv-shaped Secret Files the command read or sourced: the suggested `run` must load them.
+  const envReads: string[] = [];
   let denial: Decision | undefined;
   const rewrites: Array<{ at: number; insert: string }> = [];
 
@@ -327,6 +329,10 @@ function bash(call: ToolCall, policy: Policy, home: string | undefined): Decisio
     if (hits.length > 0) {
       if (consumes(cmd, prog.index, prog.name, hits, policy)) continue;
       readers.push(outer);
+      for (const hit of hits) {
+        const shown = display(hit.path, cwd, home);
+        if (ENV_SHAPED.test(basename(hit.path)) && !envReads.includes(shown)) envReads.push(shown);
+      }
       if (!denial) {
         const file = display(hits[0]!.path, cwd, home);
         denial = { kind: "deny", rule: `secretFiles:${hits[0]!.pattern}`, file, hint: "" };
@@ -359,7 +365,7 @@ function bash(call: ToolCall, policy: Policy, home: string | undefined): Decisio
       .filter((c) => !readers.includes(c) && !SETUP_ONLY.has(programOf(c)?.name ?? ""))
       .map((c) => command.slice(c.start, c.end).trim())
       .filter(Boolean);
-    const run = rest.length > 0 ? `secrets-axi run -- ${rest.join(" && ")}` : "secrets-axi run -- <command>";
+    const run = `secrets-axi run ${envFileFlags(envReads, policy, cwd)}-- ${rest.length > 0 ? rest.join(" && ") : "<command>"}`;
     if (denial.rule.startsWith("fetchCommands:")) {
       const id = fetchId(readers[0]!);
       const awsForm = denial.rule.includes(":aws ") ? `secrets-axi run --aws-secret ${id ?? "<id>"} -- <command>` : run;
@@ -380,6 +386,18 @@ function bash(call: ToolCall, policy: Policy, home: string | undefined): Decisio
 }
 
 const SETUP_ONLY = new Set(["cd", "pushd", "popd", "set", "export", "unset", "shopt", "ulimit", "umask", "true", ":"]);
+
+const ENV_SHAPED = /^\.(env|secrets|envrc)(\..+)?$|\.env$/;
+
+/**
+ * `--env-file` flags so the suggested run loads what the command read. They replace the Policy's envFiles,
+ * so the defaults that exist here are kept in front. Empty when the defaults already cover every read.
+ */
+function envFileFlags(reads: string[], policy: Policy, cwd: string): string {
+  if (reads.every((f) => policy.envFiles.includes(f))) return "";
+  const defaults = policy.envFiles.filter((f) => !reads.includes(f) && existsSync(resolve(cwd, f)));
+  return [...defaults, ...reads].map((f) => `--env-file ${quote(f)} `).join("");
+}
 
 function fetchId(cmd: SimpleCommand): string | undefined {
   const words = cmd.tokens.map((t) => t.text);
