@@ -152,9 +152,12 @@ function inlineLiterals(cmd: SimpleCommand, program: string): string[] {
 /** Tokens of a command that resolve to Secret Files, with the `--flag=value` form unwrapped. */
 function secretTokens(cmd: SimpleCommand, policy: Policy, cwd: string, home: string | undefined, program: string | undefined): Array<{ token: Token; path: string; pattern: string }> {
   const hits: Array<{ token: Token; path: string; pattern: string }> = [];
+  const patterns = program ? searchPatterns(cmd, program) : new Set<Token>();
   for (const [i, token] of cmd.tokens.entries()) {
     // `>> .env` writes the file; nothing of it reaches the transcript.
     if (token.output) continue;
+    // A search pattern (`grep -E "\.env" f`) matches text; the files come after it.
+    if (patterns.has(token)) continue;
     // The value of an exclusion names what is NOT read: `--exclude=X`, `--ignore X`, `-g '!X'` (a plain `-g X` includes).
     if (exclusionValue(token.text, cmd.tokens[i - 1]?.text) !== undefined) continue;
     // Git exclude pathspecs (`:!x`, `:^x`, `:(exclude)x`) name what is not read, like `--exclude`.
@@ -194,7 +197,40 @@ function secretTokens(cmd: SimpleCommand, policy: Policy, cwd: string, home: str
   return hits;
 }
 
-const FIND_TESTS = new Set(["-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex", "-lname", "-ilname"]);
+const SEARCHERS = new Set(["grep", "egrep", "fgrep", "rg", "ag", "ack"]);
+/** Options of the searchers whose value is a pattern; `-f`/`--file` names a pattern file and stays a path. */
+const PATTERN_FLAGS = new Set(["-e", "--regexp"]);
+const SEARCH_VALUED = new Set(["-f", "--file", "-m", "--max-count", "-A", "-B", "-C", "--after-context", "--before-context", "--context", "-d", "-D", "-g", "--glob", "-t", "-T", "--type", "--type-not", "-j", "--threads", "-M", "--label", "--include", "--exclude", "--exclude-dir", "--ignore", "--ignore-file"]);
+
+/** The pattern tokens of a grep-like search: `-e` values, else its first positional. */
+function searchPatterns(cmd: SimpleCommand, program: string): Set<Token> {
+  const out = new Set<Token>();
+  if (!SEARCHERS.has(program)) return out;
+  const tokens = cmd.tokens.filter((t) => !t.redirect);
+  const start = tokens.findIndex((t) => t.text.replace(/^.*\//, "") === program);
+  let explicit = false;
+  let first: Token | undefined;
+  for (let i = start + 1; i < tokens.length; i++) {
+    const w = tokens[i]!.text;
+    if (w === "--") {
+      if (!explicit && !first) first = tokens[i + 1];
+      break;
+    }
+    const cluster = /^-[A-Za-z0-9]+$/.test(w) ? w.slice(1) : "";
+    if (PATTERN_FLAGS.has(w) || (cluster.endsWith("e") && !/\d/.test(cluster))) {
+      // `-e PAT`, `-ie PAT`: the next word is a pattern.
+      if (tokens[i + 1]) out.add(tokens[++i]!);
+      explicit = true;
+    } else if (w.startsWith("--regexp=") || (cluster.includes("e") && !/\d/.test(cluster.slice(0, cluster.indexOf("e"))))) {
+      explicit = true; // `-eKEY`, `--regexp=KEY`: the pattern is attached.
+    } else if (SEARCH_VALUED.has(w) || (cluster.length > 1 && SEARCH_VALUED.has(`-${cluster.at(-1)}`))) i++;
+    else if (!w.startsWith("-") && !first) first = tokens[i];
+  }
+  if (!explicit && first) out.add(first);
+  return out;
+}
+
+const FIND_TESTS =new Set(["-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex", "-lname", "-ilname"]);
 const FIND_ACTIONS = new Set(["-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"]);
 
 const ALWAYS_EXCLUDES =/^(--exclude|--exclude-dir|--ignore|--ignore-file)(=|$)/;
