@@ -323,6 +323,52 @@ function consumes(cmd: SimpleCommand, programIndex: number, program: string, hit
   return false;
 }
 
+/** The command a `secrets-axi run -- <child>` chain runs, however deep; undefined for secrets-axi's own commands. */
+function resolveChild(outer: SimpleCommand): { cmd: SimpleCommand; prog: { name: string; index: number } } | undefined {
+  let cmd = outer;
+  let prog = programOf(cmd);
+  if (!prog) return undefined;
+  // `keys`/`set`/`check` name the file on purpose; `run -- <child>` is judged by the child.
+  let hops = 0;
+  while (prog.name === "secrets-axi" && hops++ < 4) {
+    const child = runChild(cmd, prog.index);
+    const childProg = child ? programOf(child) : undefined;
+    if (!child || !childProg) break;
+    cmd = child;
+    prog = childProg;
+  }
+  return prog.name === "secrets-axi" ? undefined : { cmd, prog };
+}
+
+/** A Secret File read (not by an Allowed Consumer) or a Secret Fetch, or undefined. */
+function judge(
+  outer: SimpleCommand,
+  policy: Policy,
+  cwd: string,
+  home: string | undefined,
+): { hits: ReturnType<typeof secretTokens> } | { fetch: string } | undefined {
+  const resolved = resolveChild(outer);
+  if (!resolved) return undefined;
+  const { cmd, prog } = resolved;
+  const hits = secretTokens(cmd, policy, cwd, home, prog.name);
+  if (hits.length > 0) return consumes(cmd, prog.index, prog.name, hits, policy, cwd) ? undefined : { hits };
+  const fetch = isFetch(cmd, prog.index, policy);
+  return fetch ? { fetch } : undefined;
+}
+
+/** ssh options that take a value (`-o X`, `-p 22`, ...). */
+const SSH_VALUED = new Set(["-o", "-p", "-i", "-l", "-F", "-J", "-L", "-R", "-D", "-b", "-c", "-E", "-e", "-I", "-m", "-O", "-Q", "-S", "-W", "-w", "-B"]);
+
+/** Host and remote line of `ssh [opts] host <words...>`; ssh joins the words with spaces for the remote shell. */
+function sshRemote(cmd: SimpleCommand, programIndex: number): { host: string; line: string } | undefined {
+  const words = cmd.tokens.filter((t) => !t.redirect).map((t) => t.text);
+  let i = programIndex + 1;
+  while (i < words.length && words[i]!.startsWith("-")) i += SSH_VALUED.has(words[i]!) ? 2 : 1;
+  const host = words[i];
+  const rest = words.slice(i + 1);
+  return host && rest.length > 0 ? { host, line: rest.join(" ") } : undefined;
+}
+
 function bash(call: ToolCall, policy: Policy, home: string | undefined): Decision {
   const command = typeof call.input["command"] === "string" ? call.input["command"] : "";
   if (command.trim() === "") return { kind: "pass" };
@@ -332,25 +378,35 @@ function bash(call: ToolCall, policy: Policy, home: string | undefined): Decisio
   // Dotenv-shaped Secret Files the command read or sourced: the suggested `run` must load them.
   const envReads: string[] = [];
   let denial: Decision | undefined;
+  // Set when the denied read is on an ssh remote: the Hint cannot load that file locally.
+  let denialHost: string | undefined;
   const rewrites: Array<{ at: number; insert: string }> = [];
 
   for (const outer of commands) {
-    let cmd = outer;
-    let prog = programOf(cmd);
-    if (!prog) continue;
-    // `keys`/`set`/`check` name the file on purpose; `run -- <child>` is judged by the child, however deep.
-    let hops = 0;
-    while (prog.name === "secrets-axi" && hops++ < 4) {
-      const child = runChild(cmd, prog.index);
-      const childProg = child ? programOf(child) : undefined;
-      if (!child || !childProg) break;
-      cmd = child;
-      prog = childProg;
+    const outerProg = programOf(outer);
+    // `ssh host '<line>'`: the remote shell runs the line; each of its commands is judged, by name only.
+    const remote = outerProg?.name === "ssh" ? sshRemote(outer, outerProg.index) : undefined;
+    if (remote) {
+      for (const inner of parseCommand(remote.line)) {
+        const verdict = judge(inner, policy, cwd, home);
+        if (!verdict) continue;
+        readers.push(outer);
+        if (!denial) {
+          if ("hits" in verdict) denialHost = remote.host;
+          denial =
+            "hits" in verdict
+              ? { kind: "deny", rule: `secretFiles:${verdict.hits[0]!.pattern}`, file: verdict.hits[0]!.path, hint: "" }
+              : { kind: "deny", rule: `fetchCommands:${verdict.fetch}`, hint: "" };
+        }
+      }
+      continue;
     }
-    if (prog.name === "secrets-axi") continue;
-    const hits = secretTokens(cmd, policy, cwd, home, prog.name);
-    if (hits.length > 0) {
-      if (consumes(cmd, prog.index, prog.name, hits, policy, cwd)) continue;
+    const resolved = resolveChild(outer);
+    if (!resolved) continue;
+    const { cmd, prog } = resolved;
+    const verdict = judge(cmd, policy, cwd, home);
+    if (verdict && "hits" in verdict) {
+      const hits = verdict.hits;
       readers.push(outer);
       for (const hit of hits) {
         const shown = display(hit.path, cwd, home);
@@ -362,10 +418,9 @@ function bash(call: ToolCall, policy: Policy, home: string | undefined): Decisio
       }
       continue;
     }
-    const fetch = isFetch(cmd, prog.index, policy);
-    if (fetch) {
+    if (verdict) {
       readers.push(outer);
-      if (!denial) denial = { kind: "deny", rule: `fetchCommands:${fetch}`, hint: "" };
+      if (!denial) denial = { kind: "deny", rule: `fetchCommands:${verdict.fetch}`, hint: "" };
       continue;
     }
     const search = RECURSIVE_SEARCH[prog.name];
@@ -394,6 +449,8 @@ function bash(call: ToolCall, policy: Policy, home: string | undefined): Decisio
           ? `secrets-axi run --keychain ${keychain} -- <command>`
           : run;
       denial.hint = `\`${spec}\` prints a secret value into the transcript. Run \`${form}\` to inject it into a command's environment instead${aws ? "; `aws secretsmanager list-secrets` / `describe-secret` are fine for names" : ""}`;
+    } else if (denialHost) {
+      denial.hint = `${denialHost}:${denial.file} is a Secret File on a remote host - reading it puts its values in the transcript. Run \`ssh ${denialHost} npx -y secrets-axi keys ${quote(denial.file!)}\` for variable names and shapes`;
     } else {
       const file = denial.file!;
       denial.hint = `${file} is a Secret File - reading it puts its values in the transcript. Run \`${run}\` to run with it loaded, \`secrets-axi keys ${quote(file)}\` for variable names and shapes, \`secrets-axi set ${quote(file)} KEY=value\` to change one`;

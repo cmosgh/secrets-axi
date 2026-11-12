@@ -248,6 +248,8 @@ const WRAPPERS: Record<string, string[]> = {
   stdbuf: ["-i", "-o", "-e"],
   unbuffer: [],
   nix: ["--option"],
+  npx: ["-p", "--package", "-c", "--call"],
+  bunx: ["-p", "--package"],
 };
 
 /** The program of a simple command: skips `VAR=x` assignments and common wrappers with their options. */
