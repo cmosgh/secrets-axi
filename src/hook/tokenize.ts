@@ -79,6 +79,13 @@ function split(text: string, base: number, out: SimpleCommand[], depth: number):
           split(text.slice(i + 2, close), base + i + 2, out, depth + 1);
           cur += text.slice(i, close + 1);
           i = close + 1;
+        } else if (text[i] === "`") {
+          // Backticks run inside double quotes too: `echo "x `cat .env` y"`.
+          const close = text.indexOf("`", i + 1);
+          const endQ = close < 0 ? text.length : close;
+          split(text.slice(i + 1, endQ), base + i + 1, out, depth + 1);
+          cur += text.slice(i, endQ + 1);
+          i = endQ + 1;
         } else {
           cur += text[i];
           i++;

@@ -170,6 +170,12 @@ describe("Bash reads", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("backtick substitutions inside double quotes are commands", () => {
+    expect(bash('echo "x `cat .env` y"').kind).toBe("deny");
+    expect(bash("echo 'x `cat .env` y'").kind).toBe("pass");
+    expect(bash('git commit -m "use `secrets-axi run` instead"').kind).toBe("pass");
+  });
+
   it("git exclude pathspecs are not reads; a command after a shell keyword is judged by its own program", () => {
     expect(bash(`git grep -n "foo" -- '*.js' ':!**/spec/**' | grep -v bar | head -12`).kind).toBe("pass");
     expect(bash("git grep foo -- . ':(exclude).env' ':^.env.local'").kind).toBe("pass");
