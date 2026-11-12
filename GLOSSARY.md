@@ -20,7 +20,7 @@ The text of a deny decision: at most two lines naming the exact replacement comm
 
 ## Allowed Consumer
 
-A program that loads a Secret File without printing it, so naming the file on its command line is not a read: `docker ... --env-file`, `dotenv -e`, `dotenvx run`, `op run --env-file`, and secrets-axi itself. Named by a built-in list the Policy can extend.
+A program that loads a Secret File without printing it, so naming the file on its command line is not a read: `docker ... --env-file`, `dotenv -e`, `dotenvx run`, `op run --env-file`, secrets-axi itself, and a copy (`cp`, `mv`, `install`, `ln`) whose destination is still a Secret File or a directory. Named by a built-in list the Policy can extend.
 
 ## Recursive Search
 

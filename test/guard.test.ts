@@ -122,6 +122,12 @@ describe("Bash reads", () => {
     "op run --env-file=.env -- pnpm start",
     "ls -la .env",
     "rm .env.bak",
+    "cp .env .claude/worktrees/x/.env",
+    "W=.claude/worktrees/X && cp .env $W/.env && cp .env.e2e $W/.env.e2e && (cd $W && npx husky)",
+    "install -m 600 .env /srv/app/.env",
+    "mv .env.local .env.local.bak",
+    "ln -s ../../.env apps/web/.env",
+    "cp .env.local apps/",
     "test -f .env && echo present",
     "git add .env.example",
     "cat .env.example",
@@ -204,6 +210,9 @@ describe("Bash reads", () => {
   it("a consumer that takes the file only as its flag value does not excuse other reads", () => {
     expect(bash("docker run --env-file .env app && cat .env").kind).toBe("deny");
     expect(bash("docker cp .env app:/x").kind).toBe("deny");
+    expect(bash("cp .env /dev/stdout").kind).toBe("deny");
+    expect(bash("cp .env.local /dev/fd/1").kind).toBe("deny");
+    expect(bash("cp .env x/.env && cat x/.env").kind).toBe("deny");
   });
 });
 
