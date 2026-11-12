@@ -209,7 +209,11 @@ function heredocBody(body: string, at: number, quoted: boolean, fed: SimpleComma
     return;
   }
   if (!quoted) {
-    for (const m of body.matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)) split(m[1] ?? m[2] ?? "", at + m.index + (m[1] !== undefined ? 2 : 1), out, depth + 1);
+    // `\`` and `\$(` are literal in a heredoc body; the alternation consumes `\x` pairs so they never open a substitution.
+    for (const m of body.matchAll(/\\[\s\S]|\$\(([^()]*)\)|`((?:[^`\\]|\\[\s\S])*)`/g)) {
+      if (m[1] === undefined && m[2] === undefined) continue;
+      split(m[1] ?? m[2]!, at + m.index + (m[1] !== undefined ? 2 : 1), out, depth + 1);
+    }
   }
   if (prog && fed && INTERPRETERS.has(prog.name)) fed.tokens.push({ text: body, start: at, end: at + body.length, heredoc: true });
 }
