@@ -126,6 +126,15 @@ function split(text: string, base: number, out: SimpleCommand[], depth: number):
       // Subshell and group delimiters: a boundary, not a token.
       if (curStart >= 0 && cur !== "") flush();
       else curStart = -1;
+      // A function header (`mk()`, `function mk`, `function mk()`) names the body; it is not the body's program.
+      const header = tokens.length === 1 || (tokens.length === 2 && tokens[0]!.text === "function");
+      const parens = c === "(" && /^\(\s*\)/.exec(text.slice(i));
+      if (header && (parens || (c === "{" && tokens[0]!.text === "function"))) {
+        tokens = [];
+        i += parens ? parens[0].length : 1;
+        cmdStart = i;
+        continue;
+      }
       i++;
       cmdStart = tokens.length === 0 ? i : cmdStart;
       continue;
