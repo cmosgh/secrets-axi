@@ -161,8 +161,9 @@ function secretTokens(cmd: SimpleCommand, policy: Policy, cwd: string, home: str
     if (patterns.has(token)) continue;
     // Interpreter code (a heredoc body, `python -c <code>`) is judged by its string literals below, never as one path.
     if (token.heredoc || (program && INLINE_CODE[program]?.includes(cmd.tokens[i - 1]?.text ?? ""))) continue;
-    // `for d in a/*/*`: a glob in the list is iterated, not read (the body is judged on its own); named files still count.
-    if ((program === "for" || program === "select") && /[*?[]/.test(token.text)) continue;
+    // `for d in a/*/*`: a glob in the list is iterated (the body is judged on its own); it counts only when a real
+    // match in a listable directory is a Secret File (`for f in .env*`), never by what it could match.
+    if ((program === "for" || program === "select") && /[*?[]/.test(token.text) && !globPattern(token.text, policy, cwd, home, true)) continue;
     // The value of an exclusion names what is NOT read: `--exclude=X`, `--ignore X`, `-g '!X'` (a plain `-g X` includes).
     if (exclusionValue(token.text, cmd.tokens[i - 1]?.text) !== undefined) continue;
     // Git exclude pathspecs (`:!x`, `:^x`, `:(exclude)x`) name what is not read, like `--exclude`.
@@ -264,7 +265,7 @@ function excludesSecrets(value: string, policy: Policy): boolean {
  * A glob token is a read of a Secret File when one of its real matches is one (`prs/*` over markdown passes,
  * `certs/*` over a .pem denies). When the directory cannot be listed here, it counts when it could match one.
  */
-function globPattern(token: string, policy: Policy, cwd: string, home: string | undefined): string | undefined {
+function globPattern(token: string, policy: Policy, cwd: string, home: string | undefined, listedOnly = false): string | undefined {
   if (!/[*?]/.test(token)) return undefined;
   const slash = token.lastIndexOf("/");
   const dir = slash < 0 ? "" : token.slice(0, slash + 1);
@@ -282,6 +283,7 @@ function globPattern(token: string, policy: Policy, cwd: string, home: string | 
       return undefined;
     }
   }
+  if (listedOnly) return undefined;
   const patterns = basenamePatterns(policy);
   const at = sampleNames(policy).findIndex((name) => (base.startsWith(".") || !name.startsWith(".")) && re.test(name));
   return at >= 0 ? patterns[at] : undefined;

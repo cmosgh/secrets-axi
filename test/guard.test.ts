@@ -216,6 +216,11 @@ describe("Bash reads", () => {
     expect(at("cat certs/*")).toBe("deny");
     expect(at("head certs/*.pem")).toBe("deny");
     expect(at("cat missing/*")).toBe("deny");
+    // A loop list counts by its real matches only: iterated names, but a Secret File among them is still read.
+    expect(at("for f in .env*; do cat $f; done")).toBe("deny");
+    expect(at("for f in certs/*; do head $f; done")).toBe("deny");
+    expect(at("for d in prs/*; do wc -l $d; done")).toBe("pass");
+    expect(at("for d in missing/*/*; do git -C $d log; done")).toBe("pass");
     rmSync(dir, { recursive: true, force: true });
   });
 
