@@ -184,6 +184,15 @@ describe("Bash reads", () => {
     expect(bash(command).kind).toBe("pass");
   });
 
+  it("a shell function body is judged on its own, not as a command of the function name", () => {
+    const call = (def: string) => `D=plans/x && ${def} secrets-axi run --env-file .env -- atl-axi issue create --description-file "$D/$1.md" "\${@:3}" 2>&1 | grep key; }\nmk A "summary" --sprint 582`;
+    expect(bash(call("mk() {")).kind).toBe("pass");
+    expect(bash(call("function mk {")).kind).toBe("pass");
+    expect(bash(call("function mk() {")).kind).toBe("pass");
+    expect(bash("mk() { cat .env; }; mk").kind).toBe("deny");
+    expect(bash("function mk { source .env; }").kind).toBe("deny");
+  });
+
   it("the Runner is not a way around the Guard; keys/set/check may name the file", () => {
     expect(bash("secrets-axi run --source none -- cat .env").kind).toBe("deny");
     expect(bash("secrets-axi run --env-file .env.test -- cat ~/.aws/credentials").kind).toBe("deny");
