@@ -16,7 +16,7 @@ Guarded Run: resolve secrets, start the command with them in its environment, ma
 flags[7]:
   --env-file <file> (repeatable, in order; default: the Policy's envFiles, normally .env), --aws-secret <id> (Secrets Manager id, JSON keys become variables; <id>=NAME for a string secret; ssm:/path for Parameter Store), --keychain <service>/<account>=NAME (repeatable; a macOS keychain generic password), --source dotenv|none (skip detection), --profile/--region (aws), --quiet (no stderr summary line)
 notes:
-  Masking cannot be switched off. Values shorter than 4 characters are not masked.
+  Masking cannot be switched off. Values shorter than 4 characters and plain literals (true, false, yes, no, on, off, null, none, enabled, disabled) are not masked.
   The command runs through no shell: pass it as separate arguments after --
 examples[4]:
   secrets-axi run -- pnpm test
