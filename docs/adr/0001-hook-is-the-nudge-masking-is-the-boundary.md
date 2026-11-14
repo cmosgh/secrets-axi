@@ -23,5 +23,5 @@ Masking in the Runner is the boundary: it is unconditional, cannot be disabled, 
 
 - The hook stays simple and deterministic (token rules, listable), because it does not have to be complete.
 - Values the Runner never injected (a Secret File the child reads on its own that is not the loaded env file) are not masked; the home view lists such files so the agent loads them through `run` too.
-- Masking by substring can hit unrelated output when a value is short or common; values under four characters are not masked and this is accepted.
+- Masking by substring can hit unrelated output when a value is short or common; values under four characters and plain config literals (`true`, `false`, `null`, ...) are not masked and this is accepted.
 - Adding a new agent runtime means writing a thin hook adapter, not re-deriving the security model.

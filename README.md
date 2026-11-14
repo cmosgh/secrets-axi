@@ -122,7 +122,7 @@ Three layers, merged in order: built-in, then `~/.config/secrets-axi/policy.json
 - The `Read(...)` deny rules `setup hooks` writes also stop Claude Code from running `cp <env file> <worktree>/`: link it instead (`ln -s ../../../.env <worktree>/.env`), which reads nothing and keeps one copy.
 - A Secret File tracked by git leaks through `git diff` / `git log -p`, and through `git grep` over an all-wildcard pathspec (`'scripts/**'`, which git expands itself); secrets-axi warns in the home view, it cannot cover it.
 - A child of a Guarded Run can read the Secret File itself; Masking still covers what it prints. A value the Runner did not inject (a different Secret File the child reads on its own) is not masked, so load it through `run` too.
-- Masking is by substring: values under four characters are not masked, and a short or common value that is not a Reveal Key can hit unrelated output (`secrets-axi policy add reveal LOG_FORMAT` fixes one such key). Encoded forms (base64, URL-encoded) are not masked yet.
+- Masking is by substring: values under four characters and plain literals (`true`, `false`, `yes`, `no`, `on`, `off`, `null`, `none`, `enabled`, `disabled`) are not masked, and a short or common value that is not a Reveal Key can hit unrelated output (`secrets-axi policy add reveal LOG_FORMAT` fixes one such key). Encoded forms (base64, URL-encoded) are not masked yet.
 - Membership of a Secret File is by name; a secret in an unnamed file is not seen (content sniffing is deferred).
 - 0.1 resolves plain `.env` and AWS. `op`, `doppler`, `dotenvx` and `infisical` are detected and reported as "not supported yet"; the OpenCode plugin and Windows are deferred.
 

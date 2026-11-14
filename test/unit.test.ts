@@ -51,6 +51,11 @@ describe("masking", () => {
     expect(table.map((t) => t.replacement)).toEqual(["<TOKEN>", "<PREFIX>", "<PORT>"]);
     expect(maskText(`Authorization: Bearer ${FAKE_TOKEN} on :3000 ab`, table)).toBe("Authorization: Bearer <TOKEN> on :<PORT> ab");
   });
+  it("skips plain config literals like true/false", () => {
+    const table = maskTable(new Map([["TESTING_MODE", "true"], ["FLAG", "Disabled"], ["TOKEN", FAKE_TOKEN]]));
+    expect(table.map((t) => t.replacement)).toEqual(["<TOKEN>"]);
+    expect(maskText(`true means create; ${FAKE_TOKEN}`, table)).toBe("true means create; <TOKEN>");
+  });
   it("catches a value split across chunks", async () => {
     const stream = new MaskStream(maskTable(env));
     const chunks: string[] = [];

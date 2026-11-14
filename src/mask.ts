@@ -4,6 +4,14 @@ import { Transform } from "node:stream";
 /** Values shorter than this are not masked: they would shred ordinary output. */
 export const MIN_MASK_LENGTH = 4;
 
+/** Config literals (case-insensitive) that are never secret and appear in ordinary output and JSON. */
+export const PLAIN_VALUES = new Set(["true", "false", "yes", "no", "on", "off", "null", "none", "nil", "enabled", "disabled", "undefined"]);
+
+/** Whether a value is too short or too common to mask. */
+export function unmaskable(value: string): boolean {
+  return value.length < MIN_MASK_LENGTH || PLAIN_VALUES.has(value.trim().toLowerCase());
+}
+
 export interface MaskEntry {
   value: string;
   replacement: string;
@@ -13,7 +21,7 @@ export interface MaskEntry {
 export function maskTable(env: ReadonlyMap<string, string>): MaskEntry[] {
   const byValue = new Map<string, string>();
   for (const [name, value] of env) {
-    if (value.length < MIN_MASK_LENGTH || byValue.has(value)) continue;
+    if (unmaskable(value) || byValue.has(value)) continue;
     byValue.set(value, `<${name}>`);
   }
   return [...byValue].map(([value, replacement]) => ({ value, replacement })).sort((a, b) => b.value.length - a.value.length);
