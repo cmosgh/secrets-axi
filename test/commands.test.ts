@@ -6,6 +6,8 @@ import { decode } from "@toon-format/toon";
 import { beforeAll, describe, expect, it } from "vitest";
 import { main } from "../src/cli.js";
 import { runHook } from "../src/hook/entry.js";
+import { spawnMasked } from "../src/commands/run.js";
+import { Writable } from "node:stream";
 
 type Payload = Record<string, unknown>;
 const FAKE_PW = "FAKE_pw_9f8e7d6c";
@@ -174,5 +176,22 @@ describe("secrets-axi commands", () => {
     expect(await hook("{not json")).toBe("");
     const rewrite = JSON.parse(await hook({ tool_name: "Grep", tool_input: { pattern: "x", path: dir }, cwd: dir }));
     expect(rewrite.hookSpecificOutput.updatedInput.glob).toMatch(/^!\{\.env,/);
+  });
+});
+
+describe("run output pipe", () => {
+  it("stops quietly when the reader goes away (EPIPE)", async () => {
+    let writes = 0;
+    const stdout = new Writable({
+      write(_chunk, _enc, done) {
+        writes++;
+        done(writes > 1 ? Object.assign(new Error("write EPIPE"), { code: "EPIPE" }) : null);
+      },
+    });
+    const stderr = new Writable({ write: (_c, _e, done) => done() });
+    const script = "for (let i = 0; i < 1e5; i++) process.stdout.write('line ' + i + '\\n');";
+    const code = await spawnMasked([process.execPath, "-e", script], new Map([["K", "FAKE_value_123"]]), process.cwd(), { stdout, stderr });
+    expect(code).not.toBe(0);
+    expect(writes).toBeLessThan(1e5);
   });
 });
