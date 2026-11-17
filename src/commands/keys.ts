@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { expectPositionals, flag, parseArgs, parseFields } from "../args.js";
@@ -91,23 +91,21 @@ export function remoteCatLine(path: string, sudoUser?: string): string {
 
 /** The file's text over ssh. Errors name host and path only; the remote stderr is not echoed (it could quote file content). */
 function readRemote(host: string, path: string, sudoUser?: string): string {
-  try {
-    return execFileSync("ssh", ["-o", "BatchMode=yes", "--", host, remoteCatLine(path, sudoUser)], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      maxBuffer: 4 * 1024 * 1024,
-      timeout: 30_000,
-    });
-  } catch (error) {
-    const e = error as { status?: number | null; code?: string; stderr?: string };
-    if (e.code === "ENOENT") throw axiError("ssh not found", "RUN_FAILED");
-    const stderr = typeof e.stderr === "string" ? e.stderr : "";
-    if (e.status === 255) throw axiError(`ssh to ${host} failed`, "RUN_FAILED", [`Check \`ssh ${host} true\` works without a prompt (keys run with BatchMode)`]);
-    if (/password is required|not allowed|sudoers/i.test(stderr)) throw axiError(`sudo -n -u ${sudoUser} refused on ${host}`, "RUN_FAILED", ["The ssh user needs passwordless sudo to that user"]);
-    if (/permission denied/i.test(stderr)) throw axiError(`permission denied: ${host}:${path}`, "RUN_FAILED", [`Run \`secrets-axi keys ${host}:${path} --sudo-user <owner>\` to read it as the file's owner`]);
-    if (/no such file|not a directory/i.test(stderr)) throw axiError(`no such file: ${host}:${path}`, "NOT_FOUND");
-    throw axiError(`reading ${host}:${path} failed (exit ${e.status ?? "?"})`, "RUN_FAILED");
-  }
+  // spawnSync, not execFileSync: the latter copies the child's stderr (ssh banners and warnings) to ours.
+  const r = spawnSync("ssh", ["-o", "BatchMode=yes", "-o", "LogLevel=ERROR", "--", host, remoteCatLine(path, sudoUser)], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    maxBuffer: 4 * 1024 * 1024,
+    timeout: 30_000,
+  });
+  if (r.status === 0) return r.stdout;
+  if ((r.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") throw axiError("ssh not found", "RUN_FAILED");
+  const stderr = r.stderr ?? "";
+  if (r.status === 255) throw axiError(`ssh to ${host} failed`, "RUN_FAILED", [`Check \`ssh ${host} true\` works without a prompt (keys run with BatchMode)`]);
+  if (/password is required|not allowed|sudoers/i.test(stderr)) throw axiError(`sudo -n -u ${sudoUser} refused on ${host}`, "RUN_FAILED", ["The ssh user needs passwordless sudo to that user"]);
+  if (/permission denied/i.test(stderr)) throw axiError(`permission denied: ${host}:${path}`, "RUN_FAILED", [`Run \`secrets-axi keys ${host}:${path} --sudo-user <owner>\` to read it as the file's owner`]);
+  if (/no such file|not a directory/i.test(stderr)) throw axiError(`no such file: ${host}:${path}`, "NOT_FOUND");
+  throw axiError(`reading ${host}:${path} failed (exit ${r.status ?? "?"})`, "RUN_FAILED");
 }
 
 function parseAny(text: string, name: string): { format: "dotenv" | "ini" | "json" | "text"; rows: KeyRow[] } {
