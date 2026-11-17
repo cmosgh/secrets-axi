@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { constants } from "node:os";
 import { bool, flag, flags, parseArgs } from "../args.js";
 import type { CommandContext } from "../context.js";
 import { axiError, usageError } from "../errors.js";
@@ -109,6 +110,16 @@ export function spawnMasked(
     err.pipe(io.stderr, { end: false });
     child.stdout.pipe(out);
     child.stderr.pipe(err);
+    // The reader went away (EPIPE from `| head`): stop forwarding and close the child's pipe so it gets SIGPIPE, as in a shell pipeline.
+    const closed = (source: NodeJS.ReadableStream & { destroy(): void }, mask: MaskStream, sink: NodeJS.WritableStream) => (): void => {
+      mask.unpipe(sink);
+      source.unpipe(mask);
+      source.destroy();
+      mask.resume();
+      mask.end();
+    };
+    io.stdout.on("error", closed(child.stdout, out, io.stdout));
+    io.stderr.on("error", closed(child.stderr, err, io.stderr));
     let pending = 2;
     let exit: number | null = null;
     const finish = (): void => {
@@ -123,7 +134,7 @@ export function spawnMasked(
       finish();
     });
     child.on("close", (code, signal) => {
-      exit = code ?? (signal ? 128 + 1 : 1);
+      exit = code ?? (signal ? 128 + (constants.signals[signal] ?? 1) : 1);
       finish();
     });
   });
