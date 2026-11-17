@@ -7,6 +7,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { main } from "../src/cli.js";
 import { runHook } from "../src/hook/entry.js";
 import { spawnMasked } from "../src/commands/run.js";
+import { remoteCatLine, remoteTarget } from "../src/commands/keys.js";
 import { Writable } from "node:stream";
 
 type Payload = Record<string, unknown>;
@@ -193,5 +194,22 @@ describe("run output pipe", () => {
     const code = await spawnMasked([process.execPath, "-e", script], new Map([["K", "FAKE_value_123"]]), process.cwd(), { stdout, stderr });
     expect(code).not.toBe(0);
     expect(writes).toBeLessThan(1e5);
+  });
+});
+
+describe("keys over ssh", () => {
+  it("parses host:path targets and builds a quoted remote cat line", () => {
+    expect(remoteTarget("stg1:/apps/x/.env")).toEqual({ host: "stg1", path: "/apps/x/.env" });
+    expect(remoteTarget("ubuntu@10.0.0.5:~/app/.env")).toEqual({ host: "ubuntu@10.0.0.5", path: "~/app/.env" });
+    expect(remoteTarget(".env")).toBeUndefined();
+    expect(remoteTarget("C:relative/.env")).toBeUndefined();
+    expect(remoteCatLine("/apps/x/.env")).toBe("cat -- '/apps/x/.env'");
+    expect(remoteCatLine("~/a b/.env", "wapuser")).toBe("sudo -n -u 'wapuser' cat -- ~/'a b/.env'");
+    expect(remoteCatLine("/x/it's/.env")).toBe("cat -- '/x/it'\\''s/.env'");
+  });
+  it("rejects --sudo-user on a local file", async () => {
+    const { dir, home } = fixture();
+    const r = await runner(dir, home)("keys", "package.json", "--sudo-user", "w");
+    expect(r.exitCode).toBe(2);
   });
 });

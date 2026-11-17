@@ -282,7 +282,9 @@ describe("Bash over ssh", () => {
     expect(d.kind).toBe("deny");
     expect(d.file).toBe("/apps/x/.env");
     expect(d.hint).toContain("host1:/apps/x/.env is a Secret File on a remote host");
-    expect(d.hint).toContain("`ssh host1 npx -y secrets-axi keys /apps/x/.env`");
+    expect(d.hint).toContain("`secrets-axi keys host1:/apps/x/.env` here");
+    expect(d.hint).not.toContain("npx");
+    expect((bash("ssh -p 22 host1 cat .env") as { hint: string }).hint).toContain("`secrets-axi keys 'host1:<absolute path of .env>'`");
     expect(d.hint).not.toContain("--env-file");
     expect(bash("ssh -p 22 host1 cat .env").kind).toBe("deny");
     expect(bash("ssh host1 aws secretsmanager get-secret-value --secret-id p/db").kind).toBe("deny");
@@ -290,7 +292,8 @@ describe("Bash over ssh", () => {
   it("judges bash -c / -lc code command by command, under sudo and ssh too", () => {
     const d = bash(`ssh h1 'sudo -n -u w bash -lc "grep TOKEN /apps/x/.env"'`) as { file: string; hint: string };
     expect(d.file).toBe("/apps/x/.env");
-    expect(d.hint).toContain("`ssh h1 npx -y secrets-axi keys /apps/x/.env`");
+    expect(d.hint).toContain("`secrets-axi keys h1:/apps/x/.env --sudo-user w`");
+    expect((bash("ssh h1 sudo -n -u wapuser cat /apps/wap/be/x/.env.local") as { hint: string }).hint).toContain("`secrets-axi keys h1:/apps/wap/be/x/.env.local --sudo-user wapuser`");
     expect((bash('sudo -u w bash -lc "source .env && node x.js"') as { file: string }).file).toBe(".env");
     expect(bash('bash -c "cat .env"').kind).toBe("deny");
   });
@@ -300,7 +303,7 @@ describe("Bash over ssh", () => {
     expect(bash("cat .env > copy.txt").kind).toBe("deny");
     expect(bash("cat < .env").kind).toBe("deny");
   });
-  it.each(["ssh host1 npx -y secrets-axi keys /apps/x/.env", "ssh host1 'rm /apps/x/.env.bak'", "ssh host1 uptime", "ssh host1", "npx -y secrets-axi keys .env"])("passes %s", (command) => {
+  it.each(["ssh host1 npx -y secrets-axi keys /apps/x/.env", "secrets-axi keys host1:/apps/x/.env --sudo-user w", "ssh host1 'rm /apps/x/.env.bak'", "ssh host1 uptime", "ssh host1", "npx -y secrets-axi keys .env"])("passes %s", (command) => {
     expect(bash(command).kind).toBe("pass");
   });
 });

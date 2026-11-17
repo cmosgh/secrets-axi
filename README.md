@@ -63,7 +63,7 @@ Masking is the boundary, the hook is the nudge: every injected value is replaced
 | --- | --- |
 | `secrets-axi` | Home view: Guard status, Secret Files in the repository (name, key count), detected Secret Source, other env files not loaded, a warning when `.env` is tracked by git, the one `run` form to use |
 | `run [--env-file F]... [--aws-secret ID[=NAME]]... [--keychain S/A=NAME]... -- <cmd>` | Guarded Run: resolve the secrets, spawn `<cmd>` with them in its environment, mask its output |
-| `keys <file>` | Key listing: each variable's name, set or empty, and the shape of its value (length, character class). Values only for Reveal Keys (`NODE_ENV`, `PORT`, `VITE_*`, ...) |
+| `keys <file>` | Key listing: each variable's name, set or empty, and the shape of its value (length, character class). Values only for Reveal Keys (`NODE_ENV`, `PORT`, `VITE_*`, ...). `keys <host>:<path> [--sudo-user <user>]` reads a remote file over ssh under the local Policy; nothing is needed on the host |
 | `set <file> KEY=value`, `unset <file> KEY` | Edit in place; prints the key name and `set` / `replaced` / `removed`, never any other line |
 | `check '<command>'`, `check --read <path>` | Dry run of the Guard: the decision and the Policy entry behind it |
 | `policy` | Effective Policy with the layer each entry comes from |
