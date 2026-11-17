@@ -429,6 +429,21 @@ function sshRemote(cmd: SimpleCommand, programIndex: number): { host: string; li
   return host && rest.length > 0 ? { host, line: rest.join(" ") } : undefined;
 }
 
+/** The `-u <user>` of a `sudo` wrapper in a simple command, if any. */
+function sudoUser(cmd: SimpleCommand): string | undefined {
+  const words = cmd.tokens.map((t) => t.text);
+  const at = words.indexOf("sudo");
+  if (at < 0) return undefined;
+  for (let i = at + 1; i < words.length && words[i]!.startsWith("-"); i++) {
+    const w = words[i]!;
+    if (w === "-u") return words[i + 1];
+    if (w.startsWith("--user=")) return w.slice(7);
+    if (/^-u\S/.test(w)) return w.slice(2);
+    if (/^-[a-zA-Z]*u$/.test(w)) return words[i + 1];
+  }
+  return undefined;
+}
+
 function bash(call: ToolCall, policy: Policy, home: string | undefined): Decision {
   const command = typeof call.input["command"] === "string" ? call.input["command"] : "";
   if (command.trim() === "") return { kind: "pass" };
@@ -440,6 +455,8 @@ function bash(call: ToolCall, policy: Policy, home: string | undefined): Decisio
   let denial: Decision | undefined;
   // Set when the denied read is on an ssh remote: the Hint cannot load that file locally.
   let denialHost: string | undefined;
+  // `sudo -u <user>` of the remote reader: the Hint reads the file as that user too.
+  let denialSudo: string | undefined;
   const rewrites: Array<{ at: number; insert: string }> = [];
 
   for (const outer of commands) {
@@ -452,7 +469,10 @@ function bash(call: ToolCall, policy: Policy, home: string | undefined): Decisio
         if (!verdict) continue;
         readers.push(outer);
         if (!denial) {
-          if ("hits" in verdict) denialHost = remote.host;
+          if ("hits" in verdict) {
+            denialHost = remote.host;
+            denialSudo = sudoUser(inner);
+          }
           denial =
             "hits" in verdict
               ? { kind: "deny", rule: `secretFiles:${verdict.hits[0]!.pattern}`, file: verdict.hits[0]!.path, hint: "" }
@@ -510,7 +530,8 @@ function bash(call: ToolCall, policy: Policy, home: string | undefined): Decisio
           : run;
       denial.hint = `\`${spec}\` prints a secret value into the transcript. Run \`${form}\` to inject it into a command's environment instead${aws ? "; `aws secretsmanager list-secrets` / `describe-secret` are fine for names" : ""}`;
     } else if (denialHost) {
-      denial.hint = `${denialHost}:${denial.file} is a Secret File on a remote host - reading it puts its values in the transcript. Run \`ssh ${denialHost} npx -y secrets-axi keys ${quote(denial.file!)}\` (needs Node there) for variable names and shapes`;
+      const target = denial.file!.startsWith("/") || denial.file!.startsWith("~/") ? `${denialHost}:${denial.file}` : `${denialHost}:<absolute path of ${denial.file}>`;
+      denial.hint = `${denialHost}:${denial.file} is a Secret File on a remote host - reading it puts its values in the transcript. Run \`secrets-axi keys ${quote(target)}${denialSudo ? ` --sudo-user ${denialSudo}` : ""}\` here for variable names, shapes and Reveal Key values (local Policy, no Node on the host)`;
     } else {
       const file = denial.file!;
       denial.hint = `${file} is a Secret File - reading it puts its values in the transcript. Run \`${run}\` to run with it loaded, \`secrets-axi keys ${quote(file)}\` for variable names and shapes, \`secrets-axi set ${quote(file)} KEY=value\` to change one`;
